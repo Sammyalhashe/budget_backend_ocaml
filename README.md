@@ -17,6 +17,14 @@ This backend service handles user data, budgeting logic, and persistent bank con
 4.  **Data Fetching**: Use the `access_token` to fetch transaction data, balances, and account details.
 5.  **Webhooks**: Set up a webhook receiver to handle updates from Plaid (e.g., new transactions available).
 
+## Implemented API Endpoints
+
+- **POST `/api/plaid/create_link_token`**  
+  Calls Plaid’s `/link/token/create` endpoint and returns a JSON payload containing a `link_token`. The client uses this token to initialize Plaid Link.
+
+- **POST `/api/plaid/exchange_public_token`**  
+  Accepts a JSON body with a `public_token` obtained from Plaid Link, exchanges it for an `access_token` via Plaid’s `/item/public_token/exchange` endpoint, and returns the resulting `access_token` (and any related metadata) in JSON format.
+
 ## Building & Running
 
 Ensure you have OCaml and Dune installed.
@@ -24,4 +32,5 @@ Ensure you have OCaml and Dune installed.
 ```bash
 dune build
 dune exec ./bin/main.exe
+```
 ```
