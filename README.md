@@ -33,4 +33,3 @@ Ensure you have OCaml and Dune installed.
 dune build
 dune exec ./bin/main.exe
 ```
-```
