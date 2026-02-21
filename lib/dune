@@ -1,0 +1,4 @@
+(library
+ (name budget_backend_lib)
+ (public_name budget_backend_lib)
+ (libraries yojson cohttp-lwt-unix lwt_ppx))

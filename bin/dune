@@ -1,1 +1,4 @@
-(executable (name main) (public_name budget_backend) (libraries dream lwt_ppx cohttp-lwt-unix yojson))
+(executable
+ (name main)
+ (public_name budget_backend)
+ (libraries dream lwt_ppx cohttp-lwt-unix yojson budget_backend_lib))
