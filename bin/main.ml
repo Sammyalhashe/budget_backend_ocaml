@@ -1,3 +1,5 @@
+(* Simple OCaml Dream server entry point *)
+
 let () =
   Dream.run
   @@ Dream.logger
