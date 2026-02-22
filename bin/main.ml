@@ -1,14 +1,69 @@
 (* Simple OCaml Dream server entry point with Plaid integration *)
 
 open Lwt.Infix
-open Dream
 
 let () =
+  let _ = Lwt_main.run (Db.init ()) in
   Dream.run
   @@ Dream.logger
   @@ Dream.router [
     Dream.get "/" (fun _ ->
       Dream.html "Hello World!");
+
+    Dream.get "/link" (fun _ ->
+      let html = {|
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset='UTF-8'>
+  <title>Plaid Link</title>
+  <script src='https://cdn.plaid.com/link/v2/stable/link-initialize.js'></script>
+</head>
+<body>
+  <h1>Plaid Link</h1>
+  <button id='link-button'>Connect Bank</button>
+  <div id='status'></div>
+
+  <script>
+    let button = document.getElementById('link-button');
+    let status = document.getElementById('status');
+
+    button.addEventListener('click', function() {
+      fetch('/api/plaid/create_link_token', { method: 'POST' })
+        .then(response => response.json())
+        .then(token => {
+          let handler = Plaid.create({
+            token: token,
+            onSuccess: function(public_token, metadata) {
+              fetch('/api/plaid/exchange_public_token', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ public_token: public_token })
+              })
+              .then(res => res.json())
+              .then(data => {
+                status.innerHTML = '<p style="color: green;">Success! Public token exchanged.</p>';
+                console.log('Exchange response:', data);
+              })
+              .catch(err => {
+                status.innerHTML = '<p style="color: red;">Error exchanging token: ' + err + '</p>';
+                console.error('Exchange error:', err);
+              });
+            }
+          });
+
+          handler.open();
+        })
+        .catch(err => {
+          status.innerHTML = '<p style="color: red;">Error creating link token: ' + err + '</p>';
+          console.error('Create token error:', err);
+        });
+    });
+  </script>
+</body>
+</html>
+|} in
+      Dream.html html);
 
     (* Create a Plaid link token *)
     Dream.post "/api/plaid/create_link_token" (fun _req ->
@@ -23,9 +78,37 @@ let () =
         (match List.assoc_opt "public_token" fields with
          | Some (`String token) ->
            Plaid.exchange_public_token token >>= fun json ->
-           Dream.json (Yojson.Safe.to_string json)
+           (match Yojson.Safe.from_string (Yojson.Safe.to_string json) with
+            | `Assoc fields ->
+              (match (List.assoc_opt "access_token" fields, List.assoc_opt "item_id" fields) with
+               | (Some (`String access_token), Some (`String item_id)) ->
+                 Db.save_token item_id access_token >>= fun () ->
+                 print_endline ("Token saved for item_id: " ^ item_id);
+                 Dream.json (Yojson.Safe.to_string json)
+               | _ ->
+                 Dream.respond ~status:`Bad_Request "Missing access_token or item_id in response")
+            | _ ->
+              Dream.respond ~status:`Internal_Server_Error "Invalid JSON response from Plaid")
          | _ ->
            Dream.respond ~status:`Bad_Request "Missing public_token")
+      | _ ->
+        Dream.respond ~status:`Bad_Request "Invalid JSON");
+
+    (* Get transactions *)
+    Dream.post "/api/plaid/transactions" (fun req ->
+      Dream.body req >>= fun body_str ->
+      match Yojson.Safe.from_string body_str with
+      | `Assoc fields ->
+        (match (List.assoc_opt "access_token" fields,
+               List.assoc_opt "start_date" fields,
+               List.assoc_opt "end_date" fields) with
+         | (Some (`String access_token),
+            Some (`String start_date),
+            Some (`String end_date)) ->
+           Plaid.get_transactions access_token start_date end_date >>= fun body ->
+           Dream.json body
+         | _ ->
+           Dream.respond ~status:`Bad_Request "Missing required fields: access_token, start_date, end_date")
       | _ ->
         Dream.respond ~status:`Bad_Request "Invalid JSON")
   ]
