@@ -14,4 +14,5 @@
   (cohttp-lwt-unix (>= 5.1.0))
   (lwt_ppx (>= 2.1.0))
   (caqti-sqlite3 (>= 1.0.0))
-  (caqti-lwt (>= 1.0.0))))
+  (caqti-lwt (>= 1.0.0))
+  (lwt-websocket (>= 0.5.0))))
