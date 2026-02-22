@@ -7,7 +7,7 @@ let create_link_token () =
 
 let exchange_public_token public_token =
   Plaid.exchange_public_token public_token >>= fun (json, item_id, access_token) ->
-  Db.save_token item_id access_token >>= fun () ->
+  Db.save_token item_id access_token None >>= fun () ->
   Lwt.return (`Assoc [("access_token", `String access_token); ("item_id", `String item_id)])
 
 let get_transactions access_token start_date end_date =
@@ -48,5 +48,5 @@ let handle_webhook payload =
     new_transactions;
     last_updated
   } in
-  Plaid_event_publisher.publish event >>= fun () ->
+  Plaid_notifier.notify event >>= fun () ->
   Lwt.return_unit

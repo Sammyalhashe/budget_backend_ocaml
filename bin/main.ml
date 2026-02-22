@@ -75,14 +75,14 @@ let () =
       Dream.body req >>= fun body_str ->
       match Yojson.Safe.from_string body_str with
       | `Assoc fields ->
-        (match List.assoc_opt "public_token" fields with
-         | Some (`String token) ->
+        (match (List.assoc_opt "public_token" fields,
+                List.assoc_opt "session_id" fields) with
+         | (Some (`String token), Some (`String session_id)) ->
            Plaid.exchange_public_token token >>= fun (json, item_id, access_token) ->
-           Db.save_token item_id access_token >>= fun () ->
-           print_endline ("Token saved for item_id: " ^ item_id);
+           Db.save_token item_id access_token (Some session_id) >>= fun () ->
            Dream.json (Yojson.Safe.to_string json)
          | _ ->
-           Dream.respond ~status:`Bad_Request "Missing public_token")
+           Dream.respond ~status:`Bad_Request "Missing public_token or session_id")
       | _ ->
         Dream.respond ~status:`Bad_Request "Invalid JSON");
 
@@ -102,5 +102,29 @@ let () =
          | _ ->
            Dream.respond ~status:`Bad_Request "Missing required fields: access_token, start_date, end_date")
       | _ ->
-        Dream.respond ~status:`Bad_Request "Invalid JSON")
+        Dream.respond ~status:`Bad_Request "Invalid JSON");
+
+    (* WebSocket endpoint for real-time Plaid event notifications *)
+    Dream.post "/api/plaid/ws" (fun req ->
+      Dream.websocket req >>= fun (reader, writer) ->
+      let session_id = Session_store.generate_session_id () in
+      Session_store.create_session "" "" >>= fun () ->
+      Plaid_notifier.add_subscriber (fun event ->
+        let json = Yojson.Safe.to_string (Plaid_event.to_json event) in
+        Lwt.catch (fun () -> Dream.websocket_send writer (`Text json) >>= fun () -> Lwt.return_unit)
+          (fun _ -> Lwt.return_unit)
+      );
+      let rec loop () =
+        Dream.websocket_receive reader >>= function
+        | `Text msg ->
+          (* Optional: handle client messages, e.g., heartbeat *)
+          loop ()
+        | `Close ->
+          Plaid_notifier.remove_subscriber (fun _ -> Lwt.return_unit);
+          Lwt.return_unit
+        | _ -> loop ()
+      in
+      loop ()
+    )
   ]
+```
