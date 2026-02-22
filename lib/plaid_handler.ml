@@ -8,7 +8,7 @@ let create_link_token () =
 let exchange_public_token public_token =
   Plaid.exchange_public_token public_token >>= fun (json, item_id, access_token) ->
   Db.save_token item_id access_token >>= fun () ->
-  Lwt.return (`Assoc [("access_token", `String access_token), ("item_id", `String item_id)])
+  Lwt.return (`Assoc [("access_token", `String access_token); ("item_id", `String item_id)])
 
 let get_transactions access_token start_date end_date =
   Plaid.get_transactions access_token start_date end_date >>= fun json ->

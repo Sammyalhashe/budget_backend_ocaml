@@ -10,15 +10,12 @@ type session = {
 let sessions = ref []
 
 let generate_session_id () =
-  let random_string length =
-    let chars = "abcdefghijklmnopqrstuvwxyz0123456789" in
-    let result = Bytes.create length in
-    for i = 0 to length - 1 do
-      Bytes.set result i (String.get chars (Random.int (String.length chars)))
-    done;
-    Bytes.to_string result
-  in
-  random_string 32
+  let chars = "abcdefghijklmnopqrstuvwxyz0123456789" in
+  let result = Bytes.create 32 in
+  for i = 0 to 31 do
+    Bytes.set result i (String.get chars (Random.int (String.length chars)))
+  done;
+  Bytes.to_string result
 
 let create_session item_id access_token =
   let session_id = generate_session_id () in

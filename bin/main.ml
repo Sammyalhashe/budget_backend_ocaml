@@ -77,18 +77,10 @@ let () =
       | `Assoc fields ->
         (match List.assoc_opt "public_token" fields with
          | Some (`String token) ->
-           Plaid.exchange_public_token token >>= fun json ->
-           (match Yojson.Safe.from_string (Yojson.Safe.to_string json) with
-            | `Assoc fields ->
-              (match (List.assoc_opt "access_token" fields, List.assoc_opt "item_id" fields) with
-               | (Some (`String access_token), Some (`String item_id)) ->
-                 Db.save_token item_id access_token >>= fun () ->
-                 print_endline ("Token saved for item_id: " ^ item_id);
-                 Dream.json (Yojson.Safe.to_string json)
-               | _ ->
-                 Dream.respond ~status:`Bad_Request "Missing access_token or item_id in response")
-            | _ ->
-              Dream.respond ~status:`Internal_Server_Error "Invalid JSON response from Plaid")
+           Plaid.exchange_public_token token >>= fun (json, item_id, access_token) ->
+           Db.save_token item_id access_token >>= fun () ->
+           print_endline ("Token saved for item_id: " ^ item_id);
+           Dream.json (Yojson.Safe.to_string json)
          | _ ->
            Dream.respond ~status:`Bad_Request "Missing public_token")
       | _ ->
