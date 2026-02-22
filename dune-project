@@ -1,0 +1,17 @@
+(lang dune 3.11)
+(name budget_backend)
+(using ocamlformat 0.26.1)
+(package
+ (name budget_backend)
+ (synopsis "A budgeting app backend with Plaid integration")
+ (description "Backend service for a budgeting application, built with Dream and OCaml.")
+ (depends
+  (ocaml (>= 4.14.0))
+  (dune (>= 3.11))
+  (dream (>= 1.0.0~alpha5))
+  (yojson (>= 2.1.0))
+  (cohttp-lwt (>= 5.1.0))
+  (cohttp-lwt-unix (>= 5.1.0))
+  (lwt_ppx (>= 2.1.0))
+  (caqti-sqlite3 (>= 1.0.0))
+  (caqti-lwt (>= 1.0.0))))
