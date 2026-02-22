@@ -40,7 +40,17 @@ let exchange_public_token public_token =
   in
   let body = Cohttp_lwt.Body.of_string (to_string body_json) in
   Cohttp_lwt_unix.Client.post ~headers:default_headers ~body uri >>= fun (_resp, body) ->
-  Cohttp_lwt.Body.to_string body >|= from_string
+  Cohttp_lwt.Body.to_string body >|= from_string >|= fun json ->
+  let `Assoc fields = json in
+  let item_id = match List.assoc_opt "item_id" fields with
+    | Some (`String id) -> id
+    | _ -> ""
+  in
+  let access_token = match List.assoc_opt "access_token" fields with
+    | Some (`String token) -> token
+    | _ -> ""
+  in
+  (json, item_id, access_token)
 
 let get_transactions access_token start_date end_date =
   let uri = Uri.of_string (base_url ^ "/transactions/get") in
@@ -55,4 +65,4 @@ let get_transactions access_token start_date end_date =
   in
   let body = Cohttp_lwt.Body.of_string (to_string body_json) in
   Cohttp_lwt_unix.Client.post ~headers:default_headers ~body uri >>= fun (_resp, body) ->
-  Cohttp_lwt.Body.to_string body
+  Cohttp_lwt.Body.to_string body >|= from_string
