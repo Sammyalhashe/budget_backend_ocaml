@@ -53,6 +53,11 @@
             pkgs.sops
             pkgs.sqlite
           ];
+          buildPhase = "dune build";
+          installPhase = ''
+            mkdir -p $out/bin
+            cp _build/default/*.exe $out/bin/
+          '';
         };
       }
     );
