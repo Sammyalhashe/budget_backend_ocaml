@@ -2,7 +2,7 @@ open Lwt
 open Dream
 
 let () =
-  Dream_logger.initialize ~level:`Debug ()
+  Dream.Logger.initialize ~level:`Debug ()
   >>= fun () ->
   Dream.run
   @@ Dream.logger
