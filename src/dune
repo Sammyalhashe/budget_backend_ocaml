@@ -1,6 +1,6 @@
 (executable
- (name main)
+ (name budget_backend)
  (public_name budget_backend)
- (libraries budget_backend.lib dream cohttp-lwt cohttp-lwt-unix lwt_ppx)
+ (libraries budget_backend_lib dream cohttp-lwt.cohttp-lwt-yojson cohttp-lwt-unix lwt_ppx)
  (modules main)
  (flags (:standard -w -49)))
