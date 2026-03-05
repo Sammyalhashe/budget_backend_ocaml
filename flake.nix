@@ -31,6 +31,29 @@
             pkgs.sqlite 
           ];
         };
+
+        defaultPackage = pkgs.mkDerivation {
+          name = "budget-backend";
+          src = ./.;
+          buildInputs = (
+            with pkgs.ocamlPackages; [
+              ocaml
+              dune_3
+              findlib
+              dream
+              yojson
+              cohttp-lwt
+              cohttp-lwt-unix
+              lwt_ppx
+              caqti
+              caqti-lwt
+              caqti-driver-sqlite3
+            ]
+          ) ++ [
+            pkgs.sops
+            pkgs.sqlite
+          ];
+        };
       }
     );
 }
