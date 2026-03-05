@@ -1,5 +1,5 @@
 (executable
- (name budget_backend)
+ (name main)
  (public_name budget_backend)
  (libraries budget_backend_lib dream cohttp-lwt.cohttp-lwt-yojson cohttp-lwt-unix lwt_ppx)
  (modules main)

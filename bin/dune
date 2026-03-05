@@ -1,4 +1,1 @@
-(executable
- (name main)
- (public_name budget_backend)
- (libraries budget_backend_lib dream lwt_ppx))
+;;;; Remove this executable stanza to resolve duplicate target
