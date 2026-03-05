@@ -32,7 +32,7 @@
           ];
         };
 
-        defaultPackage = pkgs.mkDerivation {
+        defaultPackage = pkgs.stdenv.mkDerivation {
           name = "budget-backend";
           src = ./.;
           buildInputs = (
