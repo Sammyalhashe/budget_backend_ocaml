@@ -22,10 +22,10 @@
             cohttp-lwt
             cohttp-lwt-unix
             lwt_ppx
-            ocaml-lsp
             caqti
             caqti-lwt
             caqti-driver-sqlite3
+            lwt               # Added Lwt runtime library
           ]) ++ [ 
             pkgs.sops
             pkgs.sqlite 
@@ -48,6 +48,7 @@
               caqti
               caqti-lwt
               caqti-driver-sqlite3
+              lwt               # Added Lwt runtime library
             ]
           ) ++ [
             pkgs.sops
