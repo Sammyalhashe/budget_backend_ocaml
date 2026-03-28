@@ -14,7 +14,7 @@ let get_transactions access_token start_date end_date =
   Lwt.return json
 
 let handle_webhook payload =
-  let `Assoc fields = payload in
+  let fields = Yojson.Safe.Util.to_assoc payload in
   let event_type = match List.assoc_opt "event_type" fields with
     | Some (`String s) -> s
     | _ -> ""
