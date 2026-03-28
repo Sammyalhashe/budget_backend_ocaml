@@ -39,15 +39,28 @@ let plaid_post endpoint body =
   else
     Lwt.fail_with ("Plaid API error: " ^ string_of_status res.status)
 
-let create_link_token () =
-  let body = `Assoc [
+let create_link_token ?(hosted_link = false) ?webhook () =
+  let base_fields = [
     ("client_id", `String (plaid_client_id ()));
     ("secret", `String (plaid_secret ()));
     ("client_user_id", `String "user-123");
     ("products", `List [`String "transactions"]);
     ("country_codes", `List [`String "US"]);
-    ("language", `String "en")
+    ("language", `String "en");
+    ("client_name", `String "Budget Backend");
   ] in
+  let fields_with_webhook = 
+    match webhook with
+    | Some url -> ("webhook", `String url) :: base_fields
+    | None -> base_fields
+  in
+  let fields_with_hosted_link =
+    if hosted_link then
+      ("hosted_link", `Assoc []) :: fields_with_webhook
+    else
+      fields_with_webhook
+  in
+  let body = `Assoc fields_with_hosted_link in
   plaid_post "/link/token/create" body
 
 let exchange_public_token public_token =

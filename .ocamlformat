@@ -1,0 +1,8 @@
+profile = conventional
+version = 0.26.1
+max-indent = 2
+margin = 80
+if-then-else = keyword-first
+let-binding-spacing = compact
+type-decl = compact
+module-item-spacing = compact

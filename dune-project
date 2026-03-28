@@ -1,6 +1,6 @@
 (lang dune 3.11)
 (name budget_backend)
-(using ocamlformat 0.26.1)
+; (using ocamlformat 0.26.1)
 (package
  (name budget_backend)
  (synopsis "A budgeting app backend with Plaid integration")

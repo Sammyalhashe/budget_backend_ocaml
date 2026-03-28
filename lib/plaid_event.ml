@@ -1,10 +1,10 @@
 type event_type =
-  | transactions
-  | income
-  | identity
-  | balances
-  | credit_details
-  | assets
+  | Transactions
+  | Income
+  | Identity
+  | Balances
+  | Credit_details
+  | Assets
 
 type event = {
   event_type : event_type;
@@ -15,21 +15,21 @@ type event = {
 }
 
 let event_type_to_string = function
-  | transactions -> "transactions"
-  | income -> "income"
-  | identity -> "identity"
-  | balances -> "balances"
-  | credit_details -> "credit_details"
-  | assets -> "assets"
+  | Transactions -> "transactions"
+  | Income -> "income"
+  | Identity -> "identity"
+  | Balances -> "balances"
+  | Credit_details -> "credit_details"
+  | Assets -> "assets"
 
 let string_to_event_type = function
-  | "transactions" -> transactions
-  | "income" -> income
-  | "identity" -> identity
-  | "balances" -> balances
-  | "credit_details" -> credit_details
-  | "assets" -> assets
-  | _ -> transactions
+  | "transactions" -> Transactions
+  | "income" -> Income
+  | "identity" -> Identity
+  | "balances" -> Balances
+  | "credit_details" -> Credit_details
+  | "assets" -> Assets
+  | _ -> Transactions
 
 let to_json event =
   let error_json = match event.error with
@@ -56,7 +56,7 @@ let of_json = function
   | `Assoc fields ->
     let event_type = match List.assoc_opt "event_type" fields with
       | Some (`String s) -> string_to_event_type s
-      | _ -> transactions
+      | _ -> Transactions
     in
     let item_id = match List.assoc_opt "item_id" fields with
       | Some (`String s) -> s
@@ -76,7 +76,7 @@ let of_json = function
     in
     { event_type; item_id; error; new_transactions; last_updated }
   | _ -> {
-      event_type = transactions;
+      event_type = Transactions;
       item_id = "";
       error = None;
       new_transactions = None;

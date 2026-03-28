@@ -1,12 +1,11 @@
 open Lwt.Infix
-open Yojson.Safe
 
 let create_link_token () =
   Plaid.create_link_token () >>= fun json ->
   Lwt.return (`Assoc [("link_token", json)])
 
 let exchange_public_token public_token =
-  Plaid.exchange_public_token public_token >>= fun (json, item_id, access_token) ->
+  Plaid.exchange_public_token public_token >>= fun (_json, item_id, access_token) ->
   Db.save_token item_id access_token None >>= fun () ->
   Lwt.return (`Assoc [("access_token", `String access_token); ("item_id", `String item_id)])
 

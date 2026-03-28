@@ -22,6 +22,7 @@
             cohttp-lwt
             cohttp-lwt-unix
             lwt_ppx
+            jose
             caqti
             caqti-lwt
             caqti-driver-sqlite3
@@ -44,7 +45,8 @@
               yojson
               cohttp-lwt
               cohttp-lwt-unix
-              lwt_ppx
+            lwt_ppx
+            jose
               caqti
               caqti-lwt
               caqti-driver-sqlite3

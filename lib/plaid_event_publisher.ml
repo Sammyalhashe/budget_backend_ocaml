@@ -1,8 +1,8 @@
 open Lwt
 
-type subscriber = event -> unit Lwt.t
+type subscriber = Plaid_event.event -> unit Lwt.t
 
-let subscribers = ref []
+let subscribers : subscriber list ref = ref []
 
 let subscribe f =
   subscribers := f :: !subscribers
