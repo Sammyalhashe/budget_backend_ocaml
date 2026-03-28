@@ -26,6 +26,8 @@ dune build @fmt
 
 **No formal test framework is configured.** `test.ml` is a placeholder. To add tests, use `alcotest` or `ounit2` and add a `(test ...)` stanza to a dune file.
 
+For manual/integration testing (sops credentials, curl examples, end-to-end auth flow), see **[TESTING.md](TESTING.md)**.
+
 ## Project Structure
 
 - `lib/` - Library (`budget_backend_lib`): all business logic modules
