@@ -6,38 +6,21 @@
     flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
-    flake-utils.lib.eachDefaultSystem (system:
+  outputs =
+    {
+      self,
+      nixpkgs,
+      flake-utils,
+    }:
+    flake-utils.lib.eachDefaultSystem (
+      system:
       let
         pkgs = import nixpkgs { inherit system; };
       in
       {
         devShells.default = pkgs.mkShell {
-          buildInputs = (with pkgs.ocamlPackages; [
-            ocaml
-            dune_3
-            findlib
-            dream
-            yojson
-            cohttp-lwt
-            cohttp-lwt-unix
-            lwt_ppx
-            jose
-            caqti
-            caqti-lwt
-            caqti-driver-sqlite3
-            lwt               # Added Lwt runtime library
-          ]) ++ [ 
-            pkgs.sops
-            pkgs.sqlite 
-          ];
-        };
-
-        defaultPackage = pkgs.stdenv.mkDerivation {
-          name = "budget-backend";
-          src = ./.;
-          buildInputs = (
-            with pkgs.ocamlPackages; [
+          buildInputs =
+            (with pkgs.ocamlPackages; [
               ocaml
               dune_3
               findlib
@@ -45,17 +28,47 @@
               yojson
               cohttp-lwt
               cohttp-lwt-unix
-            lwt_ppx
-            jose
+              lwt_ppx
+              jose
               caqti
               caqti-lwt
               caqti-driver-sqlite3
-              lwt               # Added Lwt runtime library
-            ]
-          ) ++ [
-            pkgs.sops
-            pkgs.sqlite
-          ];
+              lwt # Added Lwt runtime library
+            ])
+            ++ [
+              pkgs.sops
+              pkgs.sqlite
+              pkgs.jq
+            ];
+          shellHook = ''
+            eval $(sops -d --output-type json secrets.yaml | ${pkgs.jq}/bin/jq -r 'to_entries[] | select(.key | test("^PLAID")) | "export \(.key)=\(.value)"')
+            export PLAID_ENV=sandbox
+          '';
+        };
+
+        defaultPackage = pkgs.stdenv.mkDerivation {
+          name = "budget-backend";
+          src = ./.;
+          buildInputs =
+            (with pkgs.ocamlPackages; [
+              ocaml
+              dune_3
+              findlib
+              dream
+              yojson
+              cohttp-lwt
+              cohttp-lwt-unix
+              lwt_ppx
+              jose
+              caqti
+              caqti-lwt
+              caqti-driver-sqlite3
+              lwt # Added Lwt runtime library
+            ])
+            ++ [
+              pkgs.sops
+              pkgs.sqlite
+            ];
           buildPhase = "dune build";
           installPhase = ''
             mkdir -p $out/bin
