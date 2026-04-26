@@ -10,9 +10,6 @@
 Credentials are stored in `secrets.yaml`, encrypted with sops/age.
 
 ```bash
-# Verify you can decrypt
-sops -d secrets.yaml
-
 # Export Plaid env vars
 eval $(sops -d --output-type json secrets.yaml | jq -r 'to_entries[] | select(.key | test("^PLAID")) | "export \(.key)=\(.value)"')
 
@@ -27,89 +24,98 @@ dune build
 dune exec ./src/main.exe
 ```
 
-The server starts on `http://localhost:8080` by default.
+The server starts on `http://localhost:5000` by default.
 
-## 3. Manual Testing with curl
+## 3. Web-based Testing
+
+Visit `http://localhost:5000/link` in your browser for a pre-built UI to test the Plaid Link flow end-to-end.
+
+## 4. Manual Testing with Nushell
 
 ### Health check
 
-```bash
-curl http://localhost:8080/
-```
-
-### Create a link token
-
-```bash
-curl -s -X POST http://localhost:8080/api/plaid/create_link_token | jq .
+```nushell
+http get http://localhost:5000/
 ```
 
 ### Start hosted auth flow (opens browser)
 
-```bash
-curl -s -X POST http://localhost:8080/api/plaid/start-auth | jq .
+```nushell
+http post http://localhost:5000/api/plaid/start-auth
 ```
 
-This returns a `hosted_link_url` that the user visits to authenticate with their bank. The server also attempts to auto-open it in the default browser.
+### Wait for auth completion (long-poll)
+This endpoint now automatically exchanges the `public_token` and saves the `access_token` to SQLite.
+
+```nushell
+http get http://localhost:5000/api/plaid/wait-auth
+```
 
 ### Check auth status
+Returns the current state, including the `access_token` (if connected) and `item_id`.
 
-```bash
-curl -s http://localhost:8080/api/plaid/status | jq .
-```
-
-Returns `"disconnected"`, `"pending"`, or `"connected"`.
-
-### Wait for auth completion (long-poll, 5 min timeout)
-
-```bash
-curl -s http://localhost:8080/api/plaid/wait-auth | jq .
-```
-
-Polls Plaid until the hosted link flow completes or times out.
-
-### Exchange a public token
-
-```bash
-curl -s -X POST http://localhost:8080/api/plaid/exchange_public_token \
-  -H 'Content-Type: application/json' \
-  -d '{"public_token": "<TOKEN_FROM_PLAID_LINK>"}' | jq .
+```nushell
+http get http://localhost:5000/api/plaid/status
 ```
 
 ### Fetch transactions
+Now supports defaults (last 2 years to today) if dates are omitted.
 
-```bash
-curl -s -X POST http://localhost:8080/api/plaid/get_transactions \
-  -H 'Content-Type: application/json' \
-  -d '{"access_token": "<ACCESS_TOKEN>", "start_date": "2024-01-01", "end_date": "2024-12-31"}' | jq .
+```nushell
+# Default (last 2 years)
+{ access_token: "<TOKEN>" } | http post http://localhost:5000/api/plaid/get_transactions
+
+# Custom range
+{
+  access_token: "<TOKEN>",
+  start_date: "2024-01-01",
+  end_date: "2024-03-31"
+} | http post http://localhost:5000/api/plaid/get_transactions
 ```
 
-### Get accounts
+### Real-time events (WebSockets)
+Listen for real-time notifications (like webhook events) via WebSocket.
 
-```bash
-curl -s http://localhost:8080/api/plaid/accounts | jq .
+```nushell
+# Nushell doesn't have a native websocket client, but you can use 'websocat'
+websocat ws://localhost:5000/api/plaid/ws
 ```
 
-### Send a webhook (for local testing)
+### Database Cleanup
+Delete tokens that have entered an error state (e.g., `ITEM_LOGIN_REQUIRED`).
 
-```bash
-curl -s -X POST http://localhost:8080/api/plaid/webhook \
-  -H 'Content-Type: application/json' \
-  -d '{"webhook_type": "LINK", "webhook_code": "SESSION_FINISHED", "public_token": "<TOKEN>"}' | jq .
+```nushell
+http post http://localhost:5000/api/plaid/cleanup
 ```
 
-## 4. Typical Auth Flow (End-to-End)
+## 5. Webhooks
 
-1. Start the server
-2. `POST /api/plaid/start-auth` — get a hosted link URL
-3. Open the URL in a browser and complete bank login (use Plaid sandbox test credentials)
-4. `GET /api/plaid/status` or `GET /api/plaid/wait-auth` — wait for `"connected"`
-5. Use the access token to fetch transactions/accounts
+See [WEBHOOKS.md](./WEBHOOKS.md) for detailed information on how to test and mock webhooks locally.
 
-## 5. Plaid Sandbox Test Credentials
+## 6. Plaid Sandbox Test Credentials
 
-When using `PLAID_ENV=sandbox`, Plaid provides test credentials for the hosted link flow:
+When using `PLAID_ENV=sandbox`:
 
 - **Username**: `user_good`
 - **Password**: `pass_good`
 
-See [Plaid Sandbox docs](https://plaid.com/docs/sandbox/) for more test accounts and error scenarios.
+See [Plaid Sandbox docs](https://plaid.com/docs/sandbox/) for more test accounts.
+
+## 7. Production Readiness & Testing
+
+Before moving from Sandbox to Production, ensure the following are addressed:
+
+### 1. Webhook Verification
+In production, you **must** verify the JWT signature of incoming webhooks to ensure they actually come from Plaid. The current implementation in `lib/plaid_webhook.ml` contains a TODO for this.
+
+### 2. HTTPS/TLS
+Plaid requires all production redirect URIs and webhooks to use HTTPS. Ensure your backend is behind a reverse proxy (like Nginx or Caddy) with a valid SSL certificate.
+
+### 3. Access Token Security
+The `access_token` is a permanent secret. In a production environment, you should encrypt these tokens before storing them in SQLite (using a library like `Nocturne` or `Cryptokit`).
+
+### 4. Handling Update Mode
+Test the "re-authentication" flow by simulating an `ITEM_LOGIN_REQUIRED` error in Sandbox. Your TUI/frontend must be able to launch Link in "Update Mode" using the existing `access_token`.
+
+### 5. Persistent Database
+While SQLite is sufficient for small TUIs, ensure your `budget.db` is backed up regularly or consider moving to a managed PostgreSQL instance if scaling to multiple users.

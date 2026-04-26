@@ -98,9 +98,13 @@ let get_link_token_results link_token =
       ("link_token", `String link_token)
     ]
   in
-  let body = Cohttp_lwt.Body.of_string (to_string body_json) in
-  Cohttp_lwt_unix.Client.post ~headers:default_headers ~body uri >>= fun (_resp, body) ->
-  Cohttp_lwt.Body.to_string body >|= from_string
+  let body_str = to_string body_json in
+  let body = Cohttp_lwt.Body.of_string body_str in
+  Cohttp_lwt_unix.Client.post ~headers:default_headers ~body uri >>= fun (resp, body) ->
+  let status = Cohttp.Code.code_of_status (Cohttp.Response.status resp) in
+  Cohttp_lwt.Body.to_string body >>= fun body_str ->
+  Printf.printf "[DEBUG] Plaid get_link_token_results: status=%d\n" status;
+  Lwt.return body_str >|= from_string
 
 let get_webhook_verification_key ?key_id () =
   let uri = Uri.of_string (base_url ^ "/webhook_verification_key/get") in

@@ -72,6 +72,15 @@ let process_webhook_event event =
          | Some link_token -> update_link_session_status link_token "completed"
          | None -> Lwt.return_unit)
       ) tokens
+  | "ITEM", "ERROR" ->
+      (match event.item_id with
+       | Some id -> 
+           let open Yojson.Safe.Util in
+           let error_code = event.raw |> member "error" |> member "error_code" |> to_string_option in
+           (match error_code with
+            | Some "ITEM_LOGIN_REQUIRED" -> mark_token_error id
+            | _ -> Lwt.return_unit)
+       | None -> Lwt.return_unit)
   | _ -> 
       (* Other webhook types - just log *)
       Lwt.return_unit

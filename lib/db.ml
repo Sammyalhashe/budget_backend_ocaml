@@ -14,7 +14,13 @@ let unwrap = function
 
 let init () =
   let query1 = Caqti_type.(unit ->. unit)
-    "CREATE TABLE IF NOT EXISTS plaid_tokens (item_id TEXT PRIMARY KEY, access_token TEXT NOT NULL, session_id TEXT)" in
+    "CREATE TABLE IF NOT EXISTS plaid_tokens (
+       item_id TEXT PRIMARY KEY, 
+       access_token TEXT NOT NULL, 
+       session_id TEXT,
+       status TEXT DEFAULT 'active',
+       created_at TEXT DEFAULT (datetime('now'))
+     )" in
   let query2 = Caqti_type.(unit ->. unit)
     "CREATE TABLE IF NOT EXISTS link_sessions (
        session_id TEXT PRIMARY KEY,
@@ -32,9 +38,24 @@ let init () =
 
 let save_token item_id access_token session_id =
   let query = Caqti_type.(t3 string string (option string) ->. unit)
-    "INSERT OR REPLACE INTO plaid_tokens (item_id, access_token, session_id) VALUES (?, ?, ?)" in
+    "INSERT OR REPLACE INTO plaid_tokens (item_id, access_token, session_id, status, created_at) 
+     VALUES (?1, ?2, ?3, 'active', datetime('now'))" in
   Caqti_lwt_unix.Pool.use (fun (module Conn : Caqti_lwt.CONNECTION) ->
     Conn.exec query (item_id, access_token, session_id)
+  ) pool >>= unwrap
+
+let mark_token_error item_id =
+  let query = Caqti_type.(string ->. unit)
+    "UPDATE plaid_tokens SET status = 'error' WHERE item_id = ?" in
+  Caqti_lwt_unix.Pool.use (fun (module Conn : Caqti_lwt.CONNECTION) ->
+    Conn.exec query item_id
+  ) pool >>= unwrap
+
+let delete_errored_tokens () =
+  let query = Caqti_type.(unit ->. unit)
+    "DELETE FROM plaid_tokens WHERE status = 'error'" in
+  Caqti_lwt_unix.Pool.use (fun (module Conn : Caqti_lwt.CONNECTION) ->
+    Conn.exec query ()
   ) pool >>= unwrap
 
 let get_tokens () =
@@ -70,4 +91,17 @@ let get_all_link_sessions () =
     "SELECT session_id, link_token, hosted_link_url, status, updated_at FROM link_sessions ORDER BY created_at DESC" in
   Caqti_lwt_unix.Pool.use (fun (module Conn : Caqti_lwt.CONNECTION) ->
     Conn.collect_list query ()
+  ) pool >>= unwrap
+
+let get_current_status () =
+  let query = Caqti_type.(unit ->? (t5 (option string) (option string) (option string) string string))
+    "SELECT item_id, access_token, link_token, status, updated_at 
+     FROM (
+       SELECT item_id, access_token, NULL as link_token, status, created_at as updated_at 
+       FROM plaid_tokens WHERE access_token IS NOT NULL AND access_token != ''
+       UNION ALL
+       SELECT NULL, NULL, link_token, status, updated_at FROM link_sessions
+     ) ORDER BY updated_at DESC LIMIT 1" in
+  Caqti_lwt_unix.Pool.use (fun (module Conn : Caqti_lwt.CONNECTION) ->
+    Conn.find_opt query ()
   ) pool >>= unwrap
