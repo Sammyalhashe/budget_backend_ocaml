@@ -17,7 +17,10 @@
     flake-utils.lib.eachDefaultSystem (
       system:
       let
-        pkgs = import nixpkgs { inherit system; };
+        pkgs = import nixpkgs {
+          inherit system;
+          config.allowUnfree = true;
+        };
       in
       {
         devShells.default = pkgs.mkShell {
@@ -40,13 +43,14 @@
               caqti-driver-sqlite3
               lwt
               ocaml-lsp
+              ocamlformat
             ])
-            ++ [
-              pkgs.sops
-              pkgs.sqlite
-              pkgs.jq
-              pkgs.ssh-to-age
-            ];
+            ++ (with pkgs; [
+              sops
+              sqlite
+              jq
+              ssh-to-age
+            ]);
 
           shellHook = ''
             USER_SSH_KEY="$HOME/.ssh/id_ed25519"

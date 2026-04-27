@@ -2,5 +2,6 @@
  (name main)
  (public_name budget_backend)
  (libraries budget_backend_lib dream cohttp-lwt cohttp-lwt-unix yojson lwt_ppx jose str)
+ (preprocess (pps lwt_ppx))
  (modules main)
  (flags (:standard -w -49)))

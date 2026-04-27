@@ -1,5 +1,5 @@
 profile = conventional
-version = 0.26.1
+version = 0.29.0
 max-indent = 2
 margin = 80
 if-then-else = keyword-first
