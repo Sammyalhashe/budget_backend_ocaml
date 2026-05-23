@@ -7,17 +7,6 @@ let get_iso_date days_ago =
   let tm = Unix.gmtime target in
   Printf.sprintf "%04d-%02d-%02d" (tm.tm_year + 1900) (tm.tm_mon + 1) tm.tm_mday
 
-let open_url url =
-  let cmd =
-    match Sys.os_type with
-    | "Unix" -> "xdg-open " ^ url
-    | "Win32" -> "start " ^ url
-    | "Cygwin" -> "cygstart " ^ url
-    | _ -> "open " ^ url
-  in
-  let _ = Sys.command cmd in
-  ()
-
 let () =
   let _ = Lwt_main.run (Db.init ()) in
   Dream.run ~port:5000
@@ -170,18 +159,10 @@ let () =
              | _ -> ""
            in
            Db.save_link_session link_token link_token hosted_link_url "pending" >>= fun () ->
-           if hosted_link_url <> "" then open_url hosted_link_url;
            let response =
              `Assoc
                [ ("link_token", `String link_token)
                ; ("hosted_link_url", `String hosted_link_url)
-               ; ( "open_command"
-                 , `String
-                     (match Sys.os_type with
-                     | "Unix" -> "xdg-open " ^ hosted_link_url
-                     | "Win32" -> "start " ^ hosted_link_url
-                     | "Cygwin" -> "cygstart " ^ hosted_link_url
-                     | _ -> "open " ^ hosted_link_url) )
                ]
            in
            Dream.json (Yojson.Safe.to_string response))
@@ -230,32 +211,44 @@ let () =
            | Error err ->
              Dream.respond ~status:`Bad_Request
                ("Webhook error: " ^ err))
-       ; Dream.get "/api/plaid/wait-auth" (fun _req ->
-           let timeout = 300.0 in
-           let start_time = Unix.gettimeofday () in
-           let success_response = `Assoc [ ("status", `String "connected") ] in
-           let rec poll () =
-             Db.get_current_status () >>= function
-             | Some (item_id, access_token, link_token, status, _) ->
-               let has_id = match item_id with Some id -> id <> "" | None -> false in
-               let has_at = match access_token with Some at -> at <> "" | None -> false in
-               Dream.info (fun m -> m "wait-auth: status=%s, has_item_id=%b, has_access_token=%b" status has_id has_at);
-               if status = "connected" && has_at then
-                 Dream.json (Yojson.Safe.to_string success_response)
-               else (
-                 match link_token with
-                 | Some lt ->
-                   let current_time = Unix.gettimeofday () in
-                   if current_time -. start_time > timeout then
-                     Dream.respond ~status:`Request_Timeout "Auth timeout"
-                   else
-                     Plaid.get_link_token_results lt
-                     >>= fun json ->
-                     let json_str = Yojson.Safe.to_string json in
-                     Dream.debug (fun m -> m "Plaid Response: %s" json_str);
+       ; Dream.get "/api/plaid/wait-auth" (fun req ->
+           let link_token = Dream.query req "link_token" in
+           match link_token with
+           | None ->
+             Dream.respond ~status:`Bad_Request "Missing link_token query parameter"
+           | Some lt ->
+             let timeout = 300.0 in
+             let fallback_threshold = 30.0 in
+             let start_time = Unix.gettimeofday () in
+             let rec poll () =
+               let elapsed = Unix.gettimeofday () -. start_time in
+               if elapsed > timeout then
+                 Dream.respond ~status:`Request_Timeout "Auth timeout"
+               else
+                 Db.get_link_session lt >>= function
+                 | Some (_, _, status, _) when status = "connected" ->
+                   Db.get_token_by_session lt >>= (function
+                   | Some (item_id, access_token) ->
+                     let response = `Assoc
+                       [ ("status", `String "connected")
+                       ; ("item_id", `String item_id)
+                       ; ("access_token", `String access_token)
+                       ] in
+                     Dream.json (Yojson.Safe.to_string response)
+                   | None ->
+                     let response = `Assoc [ ("status", `String "connected") ] in
+                     Dream.json (Yojson.Safe.to_string response))
+                 | Some (_, _, status, _) when status = "error" ->
+                   Dream.respond ~status:`Internal_Server_Error "Auth failed"
+                 | _ ->
+                   if elapsed < fallback_threshold then
+                     Lwt_unix.sleep 1.0 >>= fun () -> poll ()
+                   else begin
+                     Dream.info (fun m -> m "wait-auth: webhook not received, polling Plaid");
+                     Plaid.get_link_token_results lt >>= fun json ->
                      let open Yojson.Safe.Util in
-                     let item_add_result = 
-                       try 
+                     let item_add_result =
+                       try
                          let sessions = json |> member "link_sessions" |> to_list in
                          List.find_map (fun s ->
                            match s |> member "results" |> member "item_add_results" |> to_list with
@@ -264,23 +257,26 @@ let () =
                          ) sessions
                        with _ -> None
                      in
-                     (match item_add_result with
+                     match item_add_result with
                      | Some res ->
                        let public_token = res |> member "public_token" |> to_string in
-                       Dream.info (fun m -> m "wait-auth: Success! Exchanging token...");
-                       Plaid.exchange_public_token public_token >>= fun (_exchange_json, item_id, access_token) ->
-                       Dream.info (fun m -> m "SAVE_TOKEN item_id: %s, access_token: %s" item_id access_token);
-                       Db.save_token item_id access_token (Some lt) >>= fun () ->
-                       Db.update_link_session_status lt "connected" >>= fun () ->
-                       Dream.json (Yojson.Safe.to_string success_response)
+                       Db.claim_exchange lt >>= fun claimed ->
+                       if not claimed then
+                         Lwt_unix.sleep 1.0 >>= fun () -> poll ()
+                       else begin
+                         Plaid.exchange_public_token public_token >>= fun (_, item_id, access_token) ->
+                         Db.save_token item_id access_token (Some lt) >>= fun () ->
+                         Db.mark_exchange_done lt >>= fun () ->
+                         let response = `Assoc
+                           [ ("status", `String "connected")
+                           ; ("item_id", `String item_id)
+                           ; ("access_token", `String access_token)
+                           ] in
+                         Dream.json (Yojson.Safe.to_string response)
+                       end
                      | None ->
-                       Lwt_unix.sleep 2.0 >>= fun () -> poll ())
-                 | None -> 
-                   Lwt_unix.sleep 2.0 >>= fun () -> poll ()
-               )
-             | None ->
-               Dream.info (fun m -> m "wait-auth: No session found, polling...");
-               Lwt_unix.sleep 2.0 >>= fun () -> poll ()
-           in
-           poll ())
+                       Lwt_unix.sleep 2.0 >>= fun () -> poll ()
+                   end
+             in
+             poll ())
        ]

@@ -15,8 +15,8 @@ let unwrap = function
 let init () =
   let query1 = Caqti_type.(unit ->. unit)
     "CREATE TABLE IF NOT EXISTS plaid_tokens (
-       item_id TEXT PRIMARY KEY, 
-       access_token TEXT NOT NULL, 
+       item_id TEXT PRIMARY KEY,
+       access_token TEXT NOT NULL,
        session_id TEXT,
        status TEXT DEFAULT 'active',
        created_at TEXT DEFAULT (datetime('now'))
@@ -27,12 +27,19 @@ let init () =
        link_token TEXT,
        hosted_link_url TEXT,
        status TEXT,
+       exchange_status TEXT,
        created_at TEXT,
        updated_at TEXT
      )" in
+  let migrate = Caqti_type.(unit ->. unit)
+    "ALTER TABLE link_sessions ADD COLUMN exchange_status TEXT" in
   Caqti_lwt_unix.Pool.use (fun (module Conn : Caqti_lwt.CONNECTION) ->
     Conn.exec query1 () >>= function
-    | Ok () -> Conn.exec query2 ()
+    | Ok () ->
+      Conn.exec query2 () >>= (function
+      | Ok () ->
+        Conn.exec migrate () >>= fun _ -> Lwt.return (Ok ())
+      | Error _ as e -> Lwt.return e)
     | Error _ as e -> Lwt.return e
   ) pool >>= unwrap
 
@@ -91,6 +98,39 @@ let get_all_link_sessions () =
     "SELECT session_id, link_token, hosted_link_url, status, updated_at FROM link_sessions ORDER BY created_at DESC" in
   Caqti_lwt_unix.Pool.use (fun (module Conn : Caqti_lwt.CONNECTION) ->
     Conn.collect_list query ()
+  ) pool >>= unwrap
+
+let claim_exchange link_token =
+  let read_q = Caqti_type.(string ->? option string)
+    "SELECT exchange_status FROM link_sessions WHERE session_id = ?" in
+  let write_q = Caqti_type.(string ->. unit)
+    "UPDATE link_sessions SET exchange_status = 'claimed', updated_at = datetime('now') WHERE session_id = ?" in
+  Caqti_lwt_unix.Pool.use (fun (module Conn : Caqti_lwt.CONNECTION) ->
+    Conn.find_opt read_q link_token >>= function
+    | Ok (Some None) | Ok (Some (Some "")) ->
+      Conn.exec write_q link_token >>= (function
+      | Ok () -> Lwt.return (Ok true)
+      | Error e -> Lwt.return (Error e))
+    | Ok None ->
+      Conn.exec write_q link_token >>= (function
+      | Ok () -> Lwt.return (Ok true)
+      | Error e -> Lwt.return (Error e))
+    | Ok (Some (Some _)) -> Lwt.return (Ok false)
+    | Error e -> Lwt.return (Error e)
+  ) pool >>= unwrap
+
+let mark_exchange_done link_token =
+  let query = Caqti_type.(string ->. unit)
+    "UPDATE link_sessions SET exchange_status = 'exchanged', status = 'connected', updated_at = datetime('now') WHERE session_id = ?" in
+  Caqti_lwt_unix.Pool.use (fun (module Conn : Caqti_lwt.CONNECTION) ->
+    Conn.exec query link_token
+  ) pool >>= unwrap
+
+let get_token_by_session session_id =
+  let query = Caqti_type.(string ->? t2 string string)
+    "SELECT item_id, access_token FROM plaid_tokens WHERE session_id = ?" in
+  Caqti_lwt_unix.Pool.use (fun (module Conn : Caqti_lwt.CONNECTION) ->
+    Conn.find_opt query session_id
   ) pool >>= unwrap
 
 let get_current_status () =

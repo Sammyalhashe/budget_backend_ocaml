@@ -60,30 +60,51 @@ let extract_public_tokens event =
       | None -> []
 
 let process_webhook_event event =
-  let open Db in
   match event.webhook_type, event.webhook_code with
-  | "LINK", "SESSION_FINISHED" | "LINK", "ITEM_ADD_RESULT" ->
-      let tokens = extract_public_tokens event in
-      Lwt_list.iter_s (fun public_token ->
-        Plaid.exchange_public_token public_token >>= fun (_, item_id, access_token) ->
-        save_token item_id access_token None >>= fun () ->
-        (* Update link session status *)
-        (match event.link_token with
-         | Some link_token -> update_link_session_status link_token "completed"
-         | None -> Lwt.return_unit)
-      ) tokens
+  | "LINK", ("SESSION_FINISHED" | "ITEM_ADD_RESULT") ->
+    (match event.link_token with
+     | Some link_token ->
+       Db.claim_exchange link_token >>= fun claimed ->
+       if not claimed then Lwt.return_unit
+       else
+         let tokens = extract_public_tokens event in
+         Lwt.catch (fun () ->
+           Lwt_list.iter_s (fun public_token ->
+             Plaid.exchange_public_token public_token >>= fun (_, item_id, access_token) ->
+             Db.save_token item_id access_token (Some link_token)
+           ) tokens >>= fun () ->
+           Db.mark_exchange_done link_token >>= fun () ->
+           let auth_event = Plaid_event.{
+             event_type = Auth_connected;
+             item_id = (match event.item_id with Some id -> id | None -> "");
+             error = None;
+             new_transactions = None;
+             last_updated = None;
+           } in
+           Plaid_notifier.notify auth_event
+         ) (fun exn ->
+           let _ = exn in
+           Db.update_link_session_status link_token "error" >>= fun () ->
+           let err_event = Plaid_event.{
+             event_type = Auth_error;
+             item_id = "";
+             error = Some (Printexc.to_string exn);
+             new_transactions = None;
+             last_updated = None;
+           } in
+           Plaid_notifier.notify err_event
+         )
+     | None -> Lwt.return_unit)
   | "ITEM", "ERROR" ->
-      (match event.item_id with
-       | Some id -> 
-           let open Yojson.Safe.Util in
-           let error_code = event.raw |> member "error" |> member "error_code" |> to_string_option in
-           (match error_code with
-            | Some "ITEM_LOGIN_REQUIRED" -> mark_token_error id
-            | _ -> Lwt.return_unit)
-       | None -> Lwt.return_unit)
-  | _ -> 
-      (* Other webhook types - just log *)
-      Lwt.return_unit
+    (match event.item_id with
+     | Some id ->
+       let open Yojson.Safe.Util in
+       let error_code = event.raw |> member "error" |> member "error_code" |> to_string_option in
+       (match error_code with
+        | Some "ITEM_LOGIN_REQUIRED" -> Db.mark_token_error id
+        | _ -> Lwt.return_unit)
+     | None -> Lwt.return_unit)
+  | _ -> Lwt.return_unit
 
 let handle_webhook ~body ~headers =
   verify_webhook_signature ~body ~headers >>= function

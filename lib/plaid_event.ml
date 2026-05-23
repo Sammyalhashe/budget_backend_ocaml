@@ -5,6 +5,8 @@ type event_type =
   | Balances
   | Credit_details
   | Assets
+  | Auth_connected
+  | Auth_error
 
 type event = {
   event_type : event_type;
@@ -21,6 +23,8 @@ let event_type_to_string = function
   | Balances -> "balances"
   | Credit_details -> "credit_details"
   | Assets -> "assets"
+  | Auth_connected -> "auth_connected"
+  | Auth_error -> "auth_error"
 
 let string_to_event_type = function
   | "transactions" -> Transactions
@@ -29,6 +33,8 @@ let string_to_event_type = function
   | "balances" -> Balances
   | "credit_details" -> Credit_details
   | "assets" -> Assets
+  | "auth_connected" -> Auth_connected
+  | "auth_error" -> Auth_error
   | _ -> Transactions
 
 let to_json event =
