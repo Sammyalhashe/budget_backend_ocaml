@@ -38,17 +38,18 @@ Visit `http://localhost:5000/link` in your browser for a pre-built UI to test th
 http get http://localhost:5000/
 ```
 
-### Start hosted auth flow (opens browser)
+### Start hosted auth flow
 
 ```nushell
+# Returns link_token and hosted_link_url — open the URL in your browser manually
 http post http://localhost:5000/api/plaid/start-auth
 ```
 
 ### Wait for auth completion (long-poll)
-This endpoint now automatically exchanges the `public_token` and saves the `access_token` to SQLite.
+Requires the `link_token` from `start-auth`. Waits for the webhook (first 30s) then falls back to polling Plaid directly. Returns `item_id` and `access_token` on success.
 
 ```nushell
-http get http://localhost:5000/api/plaid/wait-auth
+http get http://localhost:5000/api/plaid/wait-auth?link_token=<LINK_TOKEN>
 ```
 
 ### Check auth status

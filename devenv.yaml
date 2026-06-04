@@ -1,0 +1,8 @@
+# yaml-language-server: $schema=https://devenv.sh/devenv.schema.json
+inputs:
+  nixpkgs:
+    url: git+ssh://git@github.com/NixOS/nixpkgs?ref=nixpkgs-unstable
+  devenv:
+    url: git+ssh://git@github.com/cachix/devenv
+  git-hooks:
+    url: git+ssh://git@github.com/cachix/git-hooks.nix
