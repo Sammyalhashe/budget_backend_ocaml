@@ -1,0 +1,5 @@
+(executable
+ (name tui)
+ (public_name budget_tui)
+ (libraries cohttp-lwt-unix yojson lwt lwt.unix)
+ (modules tui backend_client))
