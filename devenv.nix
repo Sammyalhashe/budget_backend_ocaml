@@ -13,6 +13,7 @@
     caqti-lwt
     caqti-driver-sqlite3
     lwt
+    lambda-term
   ]) ++ [
     pkgs.sops
     pkgs.sqlite

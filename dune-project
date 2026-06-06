@@ -15,4 +15,5 @@
   (lwt_ppx (>= 2.1.0))
   (caqti-sqlite3 (>= 1.0.0))
   (caqti-lwt (>= 1.0.0))
-  (lwt-websocket (>= 0.5.0))))
+  (lwt-websocket (>= 0.5.0))
+  (lambda-term (>= 3.0.0))))

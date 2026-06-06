@@ -1,15 +1,7 @@
+open Lwt.Infix
+open LTerm_text
+
 let spinner_frames = [| "⠋"; "⠙"; "⠹"; "⠸"; "⠼"; "⠴"; "⠦"; "⠧"; "⠇"; "⠏" |]
-
-let clear_screen () =
-  print_string "\027[2J\027[H";
-  flush stdout
-
-let hide_cursor () = print_string "\027[?25l"; flush stdout
-let show_cursor () = print_string "\027[?25h"; flush stdout
-
-let green s = Printf.sprintf "\027[32m%s\027[0m" s
-let red s = Printf.sprintf "\027[31m%s\027[0m" s
-let bold s = Printf.sprintf "\027[1m%s\027[0m" s
 
 let open_browser url =
   let cmd =
@@ -18,125 +10,154 @@ let open_browser url =
   in
   ignore (Sys.command (cmd ^ " " ^ Filename.quote url))
 
-let read_key () =
-  let open Lwt.Infix in
-  let buf = Bytes.create 1 in
-  Lwt_unix.read Lwt_unix.stdin buf 0 1 >>= fun n ->
-  if n > 0 then Lwt.return_some (Bytes.get buf 0)
-  else Lwt.return_none
+let print_styled term fragments =
+  let text = eval fragments in
+  LTerm.fprintls term text
 
-let set_raw_mode () =
-  let open Unix in
-  let attr = tcgetattr stdin in
-  let raw = { attr with c_icanon = false; c_echo = false; c_vmin = 0; c_vtime = 0 } in
-  tcsetattr stdin TCSANOW raw;
-  attr
+let render_idle term =
+  LTerm.clear_screen term >>= fun () ->
+  LTerm.goto term { LTerm_geom.row = 0; col = 0 } >>= fun () ->
+  print_styled term [B_bold true; S "Budget Backend"; E_bold] >>= fun () ->
+  LTerm.fprints term (eval [S ""]) >>= fun () ->
+  print_styled term [S "  Press Enter to connect your bank account."] >>= fun () ->
+  print_styled term [S "  Press q to quit."] >>= fun () ->
+  LTerm.flush term
 
-let wait_with_spinner msg check_done =
-  let open Lwt.Infix in
-  hide_cursor ();
-  let rec loop i =
-    if Atomic.get check_done then Lwt.return_unit
-    else begin
-      let frame = spinner_frames.(i mod Array.length spinner_frames) in
-      print_string (Printf.sprintf "\r  %s %s" frame msg);
-      flush stdout;
-      Lwt_unix.sleep 0.08 >>= fun () ->
-      loop (i + 1)
-    end
-  in
-  loop 0
+let render_spinner term frame msg =
+  let s = spinner_frames.(frame mod Array.length spinner_frames) in
+  LTerm.goto term { LTerm_geom.row = 2; col = 0 } >>= fun () ->
+  LTerm.clear_line term >>= fun () ->
+  print_styled term [B_fg LTerm_style.cyan; S ("  " ^ s); E_fg; S (" " ^ msg)] >>= fun () ->
+  LTerm.flush term
+
+let render_connected term item_id =
+  LTerm.clear_screen term >>= fun () ->
+  LTerm.goto term { LTerm_geom.row = 0; col = 0 } >>= fun () ->
+  print_styled term [B_bold true; S "Budget Backend"; E_bold] >>= fun () ->
+  print_styled term [S ""] >>= fun () ->
+  print_styled term [S "  "; B_fg LTerm_style.green; S "Connected!"; E_fg] >>= fun () ->
+  print_styled term [S ""] >>= fun () ->
+  print_styled term [S ("  Item: " ^ item_id)] >>= fun () ->
+  print_styled term [S ""] >>= fun () ->
+  print_styled term [S "  Press Enter to return, q to quit."] >>= fun () ->
+  LTerm.flush term
+
+let render_error term msg =
+  LTerm.clear_screen term >>= fun () ->
+  LTerm.goto term { LTerm_geom.row = 0; col = 0 } >>= fun () ->
+  print_styled term [B_bold true; S "Budget Backend"; E_bold] >>= fun () ->
+  print_styled term [S ""] >>= fun () ->
+  print_styled term [S "  "; B_fg LTerm_style.red; S "Error: "; E_fg; S msg] >>= fun () ->
+  print_styled term [S ""] >>= fun () ->
+  print_styled term [S "  Press Enter to retry, q to quit."] >>= fun () ->
+  LTerm.flush term
+
+let is_key ev code =
+  match ev with
+  | LTerm_event.Key { LTerm_key.code = c; _ } -> c = code
+  | _ -> false
+
+let is_char ev ch =
+  match ev with
+  | LTerm_event.Key { LTerm_key.code = LTerm_key.Char c; _ } -> Uchar.to_int c = Char.code ch
+  | _ -> false
 
 let run () =
-  let open Lwt.Infix in
-  let orig_attr = set_raw_mode () in
-  let restore () = Unix.tcsetattr Unix.stdin Unix.TCSANOW orig_attr; show_cursor () in
+  Lazy.force LTerm.stdout >>= fun term ->
+  LTerm.enter_raw_mode term >>= fun mode ->
 
-  let rec main_loop () =
-    clear_screen ();
-    print_string (Printf.sprintf "\n  %s\n\n  Press Enter to connect your bank account.\n  Press q to quit.\n\n" (bold "Budget Backend"));
-    flush stdout;
-
-    let rec wait_for_key () =
-      read_key () >>= function
-      | Some 'q' -> restore (); Lwt.return_unit
-      | Some '\n' | Some '\r' -> auth_flow ()
-      | _ -> Lwt_unix.sleep 0.05 >>= fun () -> wait_for_key ()
-    in
-    wait_for_key ()
-
-  and auth_flow () =
-    clear_screen ();
-    print_string (Printf.sprintf "\n  %s\n\n  Starting auth...\n" (bold "Budget Backend"));
-    flush stdout;
-
-    match Backend_client.start_auth () with
-    | Error e ->
-      clear_screen ();
-      print_string (Printf.sprintf "\n  %s\n\n  %s\n\n  Press Enter to retry, q to quit.\n"
-        (bold "Budget Backend") (red (Backend_client.error_to_string e)));
-      flush stdout;
-      wait_for_action ()
-    | Ok auth ->
-      open_browser auth.hosted_link_url;
-      clear_screen ();
-      print_string (Printf.sprintf "\n  %s\n\n" (bold "Budget Backend"));
-      flush stdout;
-
-      let done_flag = Atomic.make false in
-      let result_ref = Atomic.make (Error Backend_client.Timeout) in
-
-      let _worker = Lwt.async (fun () ->
-        Lwt_preemptive.detach (fun () ->
-          let r = Backend_client.wait_auth ~link_token:auth.link_token in
-          Atomic.set result_ref r;
-          Atomic.set done_flag true
-        ) ()
-      ) in
-
-      let cancel_flag = Atomic.make false in
-      let _input = Lwt.async (fun () ->
-        let rec check () =
-          if Atomic.get done_flag then Lwt.return_unit
-          else
-            read_key () >>= function
-            | Some 'q' -> Atomic.set cancel_flag true; Lwt.return_unit
-            | _ -> Lwt_unix.sleep 0.05 >>= fun () -> check ()
-        in
-        check ()
-      ) in
-
-      wait_with_spinner "Waiting for authentication... (complete login in browser)" done_flag >>= fun () ->
-
-      if Atomic.get cancel_flag then begin
-        restore (); Lwt.return_unit
-      end else begin
-        let result = Atomic.get result_ref in
-        show_cursor ();
-        clear_screen ();
-        (match result with
-         | Ok r ->
-           print_string (Printf.sprintf "\n  %s\n\n  %s\n\n  Item: %s\n\n  Press Enter to return, q to quit.\n"
-             (bold "Budget Backend") (green "Connected!") r.item_id);
-           flush stdout;
-           wait_for_action ()
-         | Error e ->
-           print_string (Printf.sprintf "\n  %s\n\n  %s\n\n  Press Enter to retry, q to quit.\n"
-             (bold "Budget Backend") (red (Backend_client.error_to_string e)));
-           flush stdout;
-           wait_for_action ())
-      end
-
-  and wait_for_action () =
-    let rec loop () =
-      read_key () >>= function
-      | Some 'q' -> restore (); Lwt.return_unit
-      | Some '\n' | Some '\r' -> main_loop ()
-      | _ -> Lwt_unix.sleep 0.05 >>= fun () -> loop ()
-    in
-    loop ()
+  let cleanup () =
+    LTerm.show_cursor term >>= fun () ->
+    LTerm.leave_raw_mode term mode
   in
 
-  Lwt.finalize main_loop (fun () -> restore (); Lwt.return_unit)
+  Lwt.finalize (fun () ->
+    let rec idle_screen () =
+      render_idle term >>= fun () ->
+      LTerm.read_event term >>= fun ev ->
+      if is_char ev 'q' || is_key ev LTerm_key.Escape then Lwt.return_unit
+      else if is_key ev LTerm_key.Enter then auth_flow ()
+      else idle_screen ()
+
+    and auth_flow () =
+      LTerm.clear_screen term >>= fun () ->
+      LTerm.goto term { LTerm_geom.row = 0; col = 0 } >>= fun () ->
+      print_styled term [B_bold true; S "Budget Backend"; E_bold] >>= fun () ->
+      print_styled term [S ""] >>= fun () ->
+      print_styled term [S "  Starting auth..."] >>= fun () ->
+      LTerm.flush term >>= fun () ->
+
+      Backend_client.start_auth () >>= function
+      | Error e -> error_screen (Backend_client.error_to_string e)
+      | Ok auth ->
+        open_browser auth.hosted_link_url;
+        LTerm.clear_screen term >>= fun () ->
+        LTerm.goto term { LTerm_geom.row = 0; col = 0 } >>= fun () ->
+        print_styled term [B_bold true; S "Budget Backend"; E_bold] >>= fun () ->
+        print_styled term [S ""] >>= fun () ->
+        LTerm.hide_cursor term >>= fun () ->
+        LTerm.flush term >>= fun () ->
+
+        let http_task = Backend_client.wait_auth ~link_token:auth.link_token in
+        let cancelled = ref false in
+
+        let spinner =
+          let rec loop i =
+            match Lwt.state http_task with
+            | Lwt.Sleep ->
+              render_spinner term i "Waiting for authentication... (complete login in browser)" >>= fun () ->
+              Lwt_unix.sleep 0.08 >>= fun () ->
+              loop (i + 1)
+            | _ -> Lwt.return_unit
+          in
+          loop 0
+        in
+
+        let input_watch =
+          let rec loop () =
+            match Lwt.state http_task with
+            | Lwt.Sleep ->
+              LTerm.read_event term >>= fun ev ->
+              if is_char ev 'q' || is_key ev LTerm_key.Escape then begin
+                cancelled := true;
+                Lwt.cancel http_task;
+                Lwt.return_unit
+              end else loop ()
+            | _ -> Lwt.return_unit
+          in
+          loop ()
+        in
+
+        let http_done = http_task >>= fun _ -> Lwt.return_unit in
+        Lwt.pick [spinner; http_done; input_watch] >>= fun () ->
+        Lwt.cancel spinner;
+        Lwt.cancel input_watch;
+        LTerm.show_cursor term >>= fun () ->
+
+        if !cancelled then idle_screen ()
+        else
+          (match Lwt.state http_task with
+           | Lwt.Return (Ok r) -> connected_screen r.item_id
+           | Lwt.Return (Error e) -> error_screen (Backend_client.error_to_string e)
+           | Lwt.Fail exn -> error_screen (Printexc.to_string exn)
+           | Lwt.Sleep -> error_screen "Unexpected state")
+
+    and connected_screen item_id =
+      render_connected term item_id >>= fun () ->
+      wait_for_action ()
+
+    and error_screen msg =
+      render_error term msg >>= fun () ->
+      wait_for_action ()
+
+    and wait_for_action () =
+      LTerm.read_event term >>= fun ev ->
+      if is_char ev 'q' || is_key ev LTerm_key.Escape then Lwt.return_unit
+      else if is_key ev LTerm_key.Enter then idle_screen ()
+      else wait_for_action ()
+    in
+
+    idle_screen ()
+  ) cleanup
 
 let () = Lwt_main.run (run ())
