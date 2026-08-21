@@ -19,7 +19,13 @@ in
       default = 5000;
       description = "Port to listen on.";
     };
-    
+
+    webhookUrl = mkOption {
+      type = types.str;
+      default = "https://webhook.salh.xyz/plaid";
+      description = "Public HTTPS URL Plaid should POST webhooks to.";
+    };
+
     secretsFile = mkOption {
       type = types.path;
       default = ./secrets.yaml;
@@ -43,7 +49,10 @@ in
       PLAID_CLIENT_ID=${config.sops.placeholder.PLAID_CLIENT_ID}
       PLAID_SECRET=${config.sops.placeholder.PLAID_SECRET}
       PORT=${toString cfg.port}
+      PLAID_WEBHOOK_URL=${cfg.webhookUrl}
     '';
+
+    networking.firewall.allowedTCPPorts = [ cfg.port ];
 
     # Create a system user for the service
     users.users.budget-backend = {

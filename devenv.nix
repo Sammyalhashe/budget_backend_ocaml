@@ -32,6 +32,7 @@
       eval $(sops -d --output-type json secrets.yaml 2>/dev/null | jq -r 'to_entries[] | select(.key | test("^PLAID")) | "export \(.key)=\(.value)"')
 
       export PLAID_ENV=sandbox
+      export PLAID_WEBHOOK_URL=''${PLAID_WEBHOOK_URL:-https://webhook.salh.xyz/plaid}
       echo "Secrets decrypted via $USER_SSH_KEY"
     else
       echo "SSH Key not found at $USER_SSH_KEY. Could not decrypt secrets."

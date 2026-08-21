@@ -2,29 +2,36 @@
 
 ## Build & Run Commands
 
-All commands must be run inside the nix development shell:
+All commands must be run inside the devenv development shell. `dune` is not on
+`PATH` outside it. Run `direnv allow` once (`.envrc` uses devenv), or prefix
+each command with `devenv shell --`:
 
 ```bash
-# Enter dev shell
-nix develop
-
 # Build entire project
-dune build
+devenv shell -- dune build
 
 # Run the server
-dune exec ./src/main.exe
+devenv shell -- dune exec src/main.exe
+
+# Run the TUI (requires the server to be running)
+devenv shell -- dune exec bin/tui.exe
 
 # Clean build artifacts
-dune clean
+devenv shell -- dune clean
 
 # Check for compilation errors without building
-dune build @check
+devenv shell -- dune build @check
 
 # Run formatter (if ocamlformat enabled)
-dune build @fmt
+devenv shell -- dune build @fmt
 ```
 
-**No formal test framework is configured.** `test.ml` is a placeholder. To add tests, use `alcotest` or `ounit2` and add a `(test ...)` stanza to a dune file.
+**Tests are minimal.** `test/test_db.ml` covers the database invariants the
+auth flow depends on (the exchange claim, aggregate status, multi-item
+sessions) and runs with `devenv shell -- dune test`. It uses plain assertions
+and exits non-zero on failure — no test framework is configured. Nothing covers
+`lib/plaid.ml` or the HTTP layer, since both need a stub server; point
+`PLAID_BASE_URL` at one to test against it.
 
 For manual/integration testing (sops credentials, curl examples, end-to-end auth flow), see **[TESTING.md](TESTING.md)**.
 
@@ -32,8 +39,11 @@ For manual/integration testing (sops credentials, curl examples, end-to-end auth
 
 - `lib/` - Library (`budget_backend_lib`): all business logic modules
 - `src/` - Executable (`budget_backend`): Dream web server entry point
-- `bin/` - Legacy executable (do not modify; unused)
-- `flake.nix` - Nix dev environment with all OCaml dependencies
+- `bin/` - Executable (`budget_tui`): lambda-term TUI client (`tui.ml`,
+  `backend_client.ml`). Actively developed; talks to the server over HTTP.
+- `devenv.nix` - Dev environment with all OCaml dependencies
+- `flake.nix` - Package build only (the devShell was removed)
+- `nixos-module.nix` - systemd service definition for deployment
 - `dune-project` - Top-level dune config (lang dune 3.11)
 
 ## Key Dependencies
@@ -41,9 +51,10 @@ For manual/integration testing (sops credentials, curl examples, end-to-end auth
 - **Dream** - Web framework (routing, middleware, HTTP)
 - **Yojson** - JSON serialization (use `Yojson.Safe`, `Yojson.Safe.Util`)
 - **Cohttp** - HTTP client for Plaid API calls
-- **Lwt** - Async I/O (use `Lwt.Infix` for `>>=`, `>=>`)
+- **Lwt** - Async I/O (use `Lwt.Infix` for `>>=`, `>|=`)
 - **Caqti** - Database access (SQLite via `caqti-driver-sqlite3`)
-- **Jose** - JWT verification (for webhook signatures)
+- **Jose** - Linked for future webhook signature verification, currently unused
+- **lambda-term** - Terminal UI toolkit used by `bin/tui.ml`
 
 ## Code Style
 
@@ -130,7 +141,12 @@ let updated = { event with error = Some "msg" }
 - `PLAID_CLIENT_ID` - Plaid API client ID
 - `PLAID_SECRET` - Plaid API secret
 - `PLAID_ENV` - sandbox/development/production
-- `PLAID_WEBHOOK_URL` - Optional webhook endpoint
+- `PLAID_WEBHOOK_URL` - Public HTTPS URL Plaid posts webhooks to. Optional in
+  code, but defaulted by `devenv.nix` and `nixos-module.nix`. Without it, link
+  tokens are created with no webhook and only the polling fallback works.
+- `PORT` - Server listen port (default 5000). The server binds `0.0.0.0`.
+- `BUDGET_BACKEND_URL` - Where the TUI looks for the server (default
+  `http://localhost:5000`). Must be kept in sync with `PORT`.
 
 ## Warnings & Flags
 

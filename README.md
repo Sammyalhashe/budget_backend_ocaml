@@ -1,35 +1,70 @@
 # Budget Backend (OCaml)
 
-This backend service handles user data, budgeting logic, and persistent bank connections via the Plaid API.
+A Dream HTTP server that connects bank accounts through Plaid, plus a
+lambda-term TUI client that drives the authentication flow from the terminal.
 
-## Architecture
+## Develop
 
-- **Web Framework**: [Dream](https://aantron.github.io/dream/) for HTTP routing, middleware, and request handling.
-- **Data Serialization**: [Yojson](https://github.com/ocaml-community/yojson) for JSON encoding/decoding.
-- **HTTP Client**: [Cohttp](https://github.com/mirage/ocaml-cohttp) for making requests to the Plaid API.
-- **Asynchronous I/O**: [Lwt](https://ocsigen.org/lwt/) for non-blocking operations.
-
-## Plaid Integration Plan
-
-1.  **Environment Setup**: Securely store `PLAID_CLIENT_ID`, `PLAID_SECRET`, and `PLAID_ENV` (sandbox/development/production).
-2.  **Link Token Creation**: Implement an endpoint `/api/plaid/create_link_token` that requests a temporary link token from Plaid for the client app to initialize Link.
-3.  **Public Token Exchange**: Implement `/api/plaid/exchange_public_token` to receive a `public_token` from the client after successful Link flow and exchange it for a permanent `access_token`.
-4.  **Data Fetching**: Use the `access_token` to fetch transaction data, balances, and account details.
-5.  **Webhooks**: Set up a webhook receiver to handle updates from Plaid (e.g., new transactions available).
-
-## Implemented API Endpoints
-
-- **POST `/api/plaid/create_link_token`**  
-  Calls Plaid’s `/link/token/create` endpoint and returns a JSON payload containing a `link_token`. The client uses this token to initialize Plaid Link.
-
-- **POST `/api/plaid/exchange_public_token`**  
-  Accepts a JSON body with a `public_token` obtained from Plaid Link, exchanges it for an `access_token` via Plaid’s `/item/public_token/exchange` endpoint, and returns the resulting `access_token` (and any related metadata) in JSON format.
-
-## Building & Running
-
-Ensure you have OCaml and Dune installed.
+`dune` is only on `PATH` inside the devenv shell. Run `direnv allow` once and
+it loads automatically; otherwise prefix every command with `devenv shell --`.
 
 ```bash
-dune build
-dune exec ./bin/main.exe
+direnv allow                  # once, then dune works directly
+dune build                    # build everything
+dune exec src/main.exe        # run the server  (terminal 1)
+dune exec bin/tui.exe         # run the TUI     (terminal 2)
 ```
+
+Entering the shell decrypts `secrets.yaml` with sops and exports
+`PLAID_CLIENT_ID`, `PLAID_SECRET`, `PLAID_ENV=sandbox`, and
+`PLAID_WEBHOOK_URL`. You need an SSH key at `~/.ssh/id_ed25519` authorized for
+it; you'll see `Secrets decrypted via …` on entry if it worked.
+
+`dune test` runs `test/test_db.ml`, which covers the database invariants the
+auth flow depends on. Everything else is verified by running the server and
+exercising endpoints; see `TESTING.md`. To test against a fake Plaid, point
+`PLAID_BASE_URL` at a local stub.
+
+### Environment variables
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `PORT` | `5000` | Server listen port. Binds `0.0.0.0`, not just loopback. |
+| `BUDGET_BACKEND_URL` | `http://localhost:5000` | Where the TUI looks for the server. Keep in sync with `PORT`. |
+| `PLAID_WEBHOOK_URL` | set by `devenv.nix` | Public HTTPS URL Plaid posts to. Without it, only the polling fallback works. |
+| `PLAID_ENV` | `sandbox` | Selects the Plaid host. |
+| `PLAID_BASE_URL` | unset | Overrides the Plaid host entirely. For pointing at a local stub. |
+
+The SQLite database is `budget.db`, resolved **relative to the working
+directory** — launching from elsewhere silently creates a new empty one.
+
+## Layout
+
+- `lib/` — `budget_backend_lib`: Plaid client (`plaid.ml`), webhook handling
+  (`plaid_webhook.ml`), persistence (`db.ml`), event broadcast
+  (`plaid_notifier.ml`).
+- `src/main.ml` — the server and its route table.
+- `bin/` — the TUI (`tui.ml`) and its HTTP client (`backend_client.ml`).
+
+## What works today
+
+- **Bank authentication.** `POST /api/plaid/start-auth` → hosted Link in a
+  browser → access token stored. Completion arrives either by webhook or, after
+  30s, by polling Plaid. See `WEBHOOKS.md`.
+- **Fetching transactions.** `POST /api/plaid/get_transactions` proxies Plaid's
+  response for a given access token and date range.
+
+## What does not
+
+- **Nothing is persisted but tokens.** No transaction storage, no sync cursor,
+  no categorisation, no budgeting.
+- **No automatic updates.** `TRANSACTIONS` webhooks are ignored.
+- **One institution only.** Institutions are not modelled at all; no route
+  lists linked items, and `/api/plaid/status` reports only the most recent.
+- **`/api/plaid/accounts` always returns 404** — `get_current_status` cannot
+  produce a row matching the handler's pattern.
+- **Webhooks are unauthenticated.** `verify_webhook_signature` always returns
+  `true`.
+
+Further reading: `WEBHOOKS.md` (auth flow and webhook handling), `TESTING.md`
+(manual endpoint exercises), `AGENTS.md` (code style and conventions).

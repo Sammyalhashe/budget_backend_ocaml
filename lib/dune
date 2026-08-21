@@ -1,4 +1,4 @@
 (library
  (name budget_backend_lib)
  
- (libraries yojson cohttp-lwt-unix lwt_ppx jose caqti-lwt.unix caqti-driver-sqlite3))
+ (libraries yojson cohttp-lwt-unix lwt_ppx jose digestif caqti-lwt.unix caqti-driver-sqlite3))

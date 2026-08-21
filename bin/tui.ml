@@ -30,6 +30,20 @@ let render_spinner term frame msg =
   print_styled term [B_fg LTerm_style.cyan; S ("  " ^ s); E_fg; S (" " ^ msg)] >>= fun () ->
   LTerm.flush term
 
+(* Static frame around the spinner line, which render_spinner redraws in place. *)
+let render_waiting term url =
+  LTerm.clear_screen term >>= fun () ->
+  LTerm.goto term { LTerm_geom.row = 0; col = 0 } >>= fun () ->
+  print_styled term [B_bold true; S "Budget Backend"; E_bold] >>= fun () ->
+  print_styled term [S ""] >>= fun () ->
+  print_styled term [S ""] >>= fun () ->
+  print_styled term [S ""] >>= fun () ->
+  print_styled term [S "  If your browser didn't open, visit:"] >>= fun () ->
+  print_styled term [S "  "; B_fg LTerm_style.blue; S url; E_fg] >>= fun () ->
+  print_styled term [S ""] >>= fun () ->
+  print_styled term [S "  [o] open browser   [q] cancel"] >>= fun () ->
+  LTerm.flush term
+
 let render_connected term item_id =
   LTerm.clear_screen term >>= fun () ->
   LTerm.goto term { LTerm_geom.row = 0; col = 0 } >>= fun () ->
@@ -91,10 +105,7 @@ let run () =
       | Error e -> error_screen (Backend_client.error_to_string e)
       | Ok auth ->
         open_browser auth.hosted_link_url;
-        LTerm.clear_screen term >>= fun () ->
-        LTerm.goto term { LTerm_geom.row = 0; col = 0 } >>= fun () ->
-        print_styled term [B_bold true; S "Budget Backend"; E_bold] >>= fun () ->
-        print_styled term [S ""] >>= fun () ->
+        render_waiting term auth.hosted_link_url >>= fun () ->
         LTerm.hide_cursor term >>= fun () ->
         LTerm.flush term >>= fun () ->
 
@@ -105,7 +116,7 @@ let run () =
           let rec loop i =
             match Lwt.state http_task with
             | Lwt.Sleep ->
-              render_spinner term i "Waiting for authentication... (complete login in browser)" >>= fun () ->
+              render_spinner term i "Waiting for authentication..." >>= fun () ->
               Lwt_unix.sleep 0.08 >>= fun () ->
               loop (i + 1)
             | _ -> Lwt.return_unit
@@ -122,6 +133,9 @@ let run () =
                 cancelled := true;
                 Lwt.cancel http_task;
                 Lwt.return_unit
+              end else if is_char ev 'o' then begin
+                open_browser auth.hosted_link_url;
+                loop ()
               end else loop ()
             | _ -> Lwt.return_unit
           in

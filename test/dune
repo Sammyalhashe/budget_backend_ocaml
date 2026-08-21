@@ -1,0 +1,4 @@
+(tests
+ (names test_db test_jwt)
+ (libraries budget_backend_lib lwt lwt.unix jose digestif base64
+   mirage-crypto-ec mirage-crypto-rng.unix))

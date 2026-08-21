@@ -2,33 +2,36 @@
 
 ## Prerequisites
 
-- Nix development shell (`nix develop`)
-- Access to the sops age key for decrypting `secrets.yaml`
+- The devenv development shell (`direnv allow`, or prefix commands with
+  `devenv shell --`)
+- An SSH key at `~/.ssh/id_ed25519` authorized to decrypt `secrets.yaml`
 
-## 1. Decrypt and Export Plaid Credentials
+## 1. Plaid Credentials
 
-Credentials are stored in `secrets.yaml`, encrypted with sops/age.
-
-```bash
-# Export Plaid env vars
-eval $(sops -d --output-type json secrets.yaml | jq -r 'to_entries[] | select(.key | test("^PLAID")) | "export \(.key)=\(.value)"')
-
-# Set environment (sandbox for testing)
-export PLAID_ENV=sandbox
-```
+Credentials are stored in `secrets.yaml`, encrypted with sops/age, and are
+decrypted **automatically on shell entry** — see `devenv.nix`. You should see
+`Secrets decrypted via ~/.ssh/id_ed25519` when the shell loads. `PLAID_ENV` is
+set to `sandbox` there too. No manual export is needed.
 
 ## 2. Build and Run
 
 ```bash
-dune build
-dune exec ./src/main.exe
+devenv shell -- dune build
+devenv shell -- dune exec src/main.exe
 ```
 
-The server starts on `http://localhost:5000` by default.
+The server starts on `http://localhost:5000` by default, and listens on
+`0.0.0.0`. Set `PORT` to change it — if you do, set `BUDGET_BACKEND_URL` to
+match before running the TUI.
 
 ## 3. Web-based Testing
 
 Visit `http://localhost:5000/link` in your browser for a pre-built UI to test the Plaid Link flow end-to-end.
+
+> **Known broken.** `Plaid_handler.create_link_token` nests Plaid's whole
+> response under a `link_token` key, so the page's `data.link_token` is an
+> object rather than a string and `Plaid.create` rejects it. The TUI flow via
+> `/api/plaid/start-auth` is unaffected.
 
 ## 4. Manual Testing with Nushell
 
