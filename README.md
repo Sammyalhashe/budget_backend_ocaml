@@ -20,10 +20,12 @@ Entering the shell decrypts `secrets.yaml` with sops and exports
 `PLAID_WEBHOOK_URL`. You need an SSH key at `~/.ssh/id_ed25519` authorized for
 it; you'll see `Secrets decrypted via …` on entry if it worked.
 
-`dune test` runs `test/test_db.ml`, which covers the database invariants the
-auth flow depends on. Everything else is verified by running the server and
-exercising endpoints; see `TESTING.md`. To test against a fake Plaid, point
-`PLAID_BASE_URL` at a local stub.
+`dune test` runs two files: `test/test_db.ml` covers the database invariants the
+auth flow depends on, and `test/test_jwt.ml` covers webhook signature
+verification, signing real ES256 tokens to check the forgery cases. Neither
+needs a server or credentials. Everything else is verified by running the
+server and exercising endpoints; see `TESTING.md`. To test against a fake
+Plaid, point `PLAID_BASE_URL` at a local stub.
 
 ### Environment variables
 
@@ -32,6 +34,7 @@ exercising endpoints; see `TESTING.md`. To test against a fake Plaid, point
 | `PORT` | `5000` | Server listen port. Binds `0.0.0.0`, not just loopback. |
 | `BUDGET_BACKEND_URL` | `http://localhost:5000` | Where the TUI looks for the server. Keep in sync with `PORT`. |
 | `PLAID_WEBHOOK_URL` | set by `devenv.nix` | Public HTTPS URL Plaid posts to. Without it, only the polling fallback works. |
+| `PLAID_WEBHOOK_VERIFY` | on | Set to `false` to accept webhooks without checking their signature. Warns at startup. |
 | `PLAID_ENV` | `sandbox` | Selects the Plaid host. |
 | `PLAID_BASE_URL` | unset | Overrides the Plaid host entirely. For pointing at a local stub. |
 
@@ -53,6 +56,8 @@ directory** — launching from elsewhere silently creates a new empty one.
   30s, by polling Plaid. See `WEBHOOKS.md`.
 - **Fetching transactions.** `POST /api/plaid/get_transactions` proxies Plaid's
   response for a given access token and date range.
+- **Verified webhooks.** Plaid's ES256 signature is checked against the raw
+  request body, on by default. See `WEBHOOKS.md`.
 
 ## What does not
 
@@ -60,11 +65,7 @@ directory** — launching from elsewhere silently creates a new empty one.
   no categorisation, no budgeting.
 - **No automatic updates.** `TRANSACTIONS` webhooks are ignored.
 - **One institution only.** Institutions are not modelled at all; no route
-  lists linked items, and `/api/plaid/status` reports only the most recent.
-- **`/api/plaid/accounts` always returns 404** — `get_current_status` cannot
-  produce a row matching the handler's pattern.
-- **Webhooks are unauthenticated.** `verify_webhook_signature` always returns
-  `true`.
+  lists linked items, and `/api/plaid/status` reports a single connection.
 
 Further reading: `WEBHOOKS.md` (auth flow and webhook handling), `TESTING.md`
 (manual endpoint exercises), `AGENTS.md` (code style and conventions).

@@ -28,10 +28,11 @@ match before running the TUI.
 
 Visit `http://localhost:5000/link` in your browser for a pre-built UI to test the Plaid Link flow end-to-end.
 
-> **Known broken.** `Plaid_handler.create_link_token` nests Plaid's whole
-> response under a `link_token` key, so the page's `data.link_token` is an
-> object rather than a string and `Plaid.create` rejects it. The TUI flow via
-> `/api/plaid/start-auth` is unaffected.
+This page went through a period where `Plaid_handler.create_link_token` nested
+Plaid's whole response under a `link_token` key, so `data.link_token` was an
+object rather than a string and `Plaid.create` rejected it. The endpoint now
+returns Plaid's response unwrapped. Note the page has not been exercised
+against real Plaid credentials since that fix.
 
 ## 4. Manual Testing with Nushell
 
@@ -110,7 +111,9 @@ See [Plaid Sandbox docs](https://plaid.com/docs/sandbox/) for more test accounts
 Before moving from Sandbox to Production, ensure the following are addressed:
 
 ### 1. Webhook Verification
-In production, you **must** verify the JWT signature of incoming webhooks to ensure they actually come from Plaid. The current implementation in `lib/plaid_webhook.ml` contains a TODO for this.
+Implemented, and on by default — see the Verification section of
+[WEBHOOKS.md](./WEBHOOKS.md). Confirm `PLAID_WEBHOOK_VERIFY` is **not** set to
+`false` in production; the server warns loudly at startup if it is.
 
 ### 2. HTTPS/TLS
 Plaid requires all production redirect URIs and webhooks to use HTTPS. Ensure your backend is behind a reverse proxy (like Nginx or Caddy) with a valid SSL certificate.

@@ -26,12 +26,12 @@ devenv shell -- dune build @check
 devenv shell -- dune build @fmt
 ```
 
-**Tests are minimal.** `test/test_db.ml` covers the database invariants the
-auth flow depends on (the exchange claim, aggregate status, multi-item
-sessions) and runs with `devenv shell -- dune test`. It uses plain assertions
-and exits non-zero on failure — no test framework is configured. Nothing covers
-`lib/plaid.ml` or the HTTP layer, since both need a stub server; point
-`PLAID_BASE_URL` at one to test against it.
+**Tests are minimal.** `devenv shell -- dune test` runs two files:
+`test/test_db.ml` (the exchange claim, aggregate status, multi-item sessions)
+and `test/test_jwt.ml` (webhook signature verification, including forged
+tokens). They use plain assertions and exit non-zero on failure — no test
+framework is configured. Nothing covers `lib/plaid.ml` or the HTTP layer, since
+both need a stub server; point `PLAID_BASE_URL` at one to test against it.
 
 For manual/integration testing (sops credentials, curl examples, end-to-end auth flow), see **[TESTING.md](TESTING.md)**.
 
@@ -53,7 +53,8 @@ For manual/integration testing (sops credentials, curl examples, end-to-end auth
 - **Cohttp** - HTTP client for Plaid API calls
 - **Lwt** - Async I/O (use `Lwt.Infix` for `>>=`, `>|=`)
 - **Caqti** - Database access (SQLite via `caqti-driver-sqlite3`)
-- **Jose** - Linked for future webhook signature verification, currently unused
+- **Jose** - JWT handling for webhook signature verification (`lib/plaid_jwt.ml`)
+- **Digestif** - SHA-256 of the raw webhook body
 - **lambda-term** - Terminal UI toolkit used by `bin/tui.ml`
 
 ## Code Style
