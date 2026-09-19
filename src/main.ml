@@ -29,6 +29,74 @@ let plaid_error_response context exn =
     Dream.error (fun m -> m "%s: %s" context (Printexc.to_string exn));
     Dream.respond ~status:`Internal_Server_Error "Internal error"
 
+(* Shared by GET /api/plaid/status and the snapshot the event stream opens
+   with, so a front-end that connects late is not left guessing.
+
+   The token is only in the status response, which a client asks for; it is
+   left out of the broadcast, which is pushed to everyone listening. *)
+let status_json ?(with_token = false) = function
+  | Db.Connected { item_id; access_token; updated_at } ->
+    `Assoc
+      [ ("status", `String "connected")
+      ; ("item_id", `String item_id)
+      ; ( "access_token"
+        , if with_token then `String access_token else `Null )
+      ; ("access_token_present", `Bool true)
+      ; ("updated_at", `String updated_at)
+      ]
+  | Db.Pending { link_token; updated_at } ->
+    `Assoc
+      [ ("status", `String "pending")
+      ; ("link_token", `String link_token)
+      ; ("access_token_present", `Bool false)
+      ; ("updated_at", `String updated_at)
+      ]
+  | Db.Auth_failed { link_token; updated_at } ->
+    `Assoc
+      [ ("status", `String "error")
+      ; ("link_token", `String link_token)
+      ; ("access_token_present", `Bool false)
+      ; ("updated_at", `String updated_at)
+      ]
+  | Db.Disconnected -> `Assoc [ ("status", `String "disconnected") ]
+
+(* Server-sent events: one frame is "event: <name>", "data: <json>", blank
+   line. The TUI reads this with a plain HTTP client, which a WebSocket would
+   have required a second protocol implementation for. *)
+let sse_frame ~event json =
+  Printf.sprintf "event: %s\ndata: %s\n\n" event (Yojson.Safe.to_string json)
+
+let sse_heartbeat_seconds = 15.0
+
+(* Nothing reaches the TUI between events, so a connection dropped mid-way —
+   the server restarted, the laptop slept — would look exactly like a session
+   the user has not finished yet. The comment frame both keeps intermediaries
+   from timing the connection out and fails the write once the peer is gone,
+   which is what ends the handler and unsubscribes it. *)
+let event_stream_handler _req =
+  Dream.stream
+    ~headers:
+      [ ("Content-Type", "text/event-stream")
+      ; ("Cache-Control", "no-cache")
+      ; ("Connection", "keep-alive")
+      ]
+    (fun stream ->
+      let write chunk =
+        Dream.write stream chunk >>= fun () -> Dream.flush stream
+      in
+      Db.get_current_status () >>= fun status ->
+      write (sse_frame ~event:"status" (status_json status)) >>= fun () ->
+      Plaid_notifier.subscribe (fun event ->
+        write (sse_frame ~event:"plaid" (Plaid_event.to_json event)))
+      >>= fun subscription ->
+      let rec heartbeat () =
+        Lwt_unix.sleep sse_heartbeat_seconds >>= fun () ->
+        write ": ping\n\n" >>= heartbeat
+      in
+      Lwt.finalize
+        (fun () -> Lwt.catch heartbeat (fun _ -> Lwt.return_unit))
+        (fun () -> Plaid_notifier.unsubscribe subscription))
+
 let plaid_webhook_handler req =
   Dream.body req >>= fun body_str ->
   let headers = Dream.all_headers req in
@@ -104,19 +172,23 @@ let () =
        ; Dream.post "/api/plaid/cleanup" (fun _req ->
            Db.delete_errored_tokens () >>= fun () ->
            Dream.json (Yojson.Safe.to_string (`Assoc [("status", `String "success"); ("message", `String "Deleted errored tokens")])))
+       ; Dream.get "/api/plaid/events" event_stream_handler
        ; Dream.get "/api/plaid/ws" (fun _req ->
            Dream.websocket (fun websocket ->
-             Plaid_notifier.add_subscriber (fun event ->
-               let json = Yojson.Safe.to_string (Plaid_event.to_json event) in
-               Lwt.catch (fun () -> Dream.send websocket json >>= fun () -> Lwt.return_unit)
-                 (fun _ -> Lwt.return_unit)
-             ) >>= fun () ->
+             (* The send must be allowed to fail: a subscriber that swallows
+                the error of a closed socket is never dropped, and the list
+                grows by one dead entry per reconnect. *)
+             Plaid_notifier.subscribe (fun event ->
+               Dream.send websocket
+                 (Yojson.Safe.to_string (Plaid_event.to_json event)))
+             >>= fun subscription ->
              let rec loop () =
                Dream.receive websocket >>= function
                | Some _msg -> loop ()
                | None -> Lwt.return_unit
              in
-             loop ()))
+             Lwt.finalize loop (fun () ->
+               Plaid_notifier.unsubscribe subscription)))
        ; Dream.post "/api/plaid/start-auth" (fun _req ->
            let webhook = Plaid.webhook_url in
            Plaid.create_link_token ~hosted_link:true ?webhook ()
@@ -143,33 +215,8 @@ let () =
            Dream.json (Yojson.Safe.to_string response))
        ; Dream.get "/api/plaid/status" (fun _req ->
            Db.get_current_status () >>= fun status ->
-           let response =
-             match status with
-             | Db.Connected { item_id; access_token; updated_at } ->
-               `Assoc
-                 [ ("status", `String "connected")
-                 ; ("item_id", `String item_id)
-                 ; ("access_token", `String access_token)
-                 ; ("access_token_present", `Bool true)
-                 ; ("updated_at", `String updated_at)
-                 ]
-             | Db.Pending { link_token; updated_at } ->
-               `Assoc
-                 [ ("status", `String "pending")
-                 ; ("link_token", `String link_token)
-                 ; ("access_token_present", `Bool false)
-                 ; ("updated_at", `String updated_at)
-                 ]
-             | Db.Auth_failed { link_token; updated_at } ->
-               `Assoc
-                 [ ("status", `String "error")
-                 ; ("link_token", `String link_token)
-                 ; ("access_token_present", `Bool false)
-                 ; ("updated_at", `String updated_at)
-                 ]
-             | Db.Disconnected -> `Assoc [ ("status", `String "disconnected") ]
-           in
-           Dream.json (Yojson.Safe.to_string response))
+           Dream.json
+             (Yojson.Safe.to_string (status_json ~with_token:true status)))
        ; Dream.get "/api/plaid/accounts" (fun _req ->
            Db.get_current_status () >>= function
            | Db.Connected { access_token; _ } ->
@@ -178,6 +225,24 @@ let () =
                  Plaid.get_accounts access_token >>= fun json ->
                  Dream.json (Yojson.Safe.to_string json))
                (plaid_error_response "get_accounts")
+           | _ -> Dream.respond ~status:`Not_Found "Not connected")
+         (* The POST form takes an access token; this one uses the connection
+            the backend already holds, which is all a front-end has. *)
+       ; Dream.get "/api/plaid/transactions" (fun req ->
+           let date name default =
+             match Dream.query req name with
+             | Some value when value <> "" -> value
+             | _ -> default
+           in
+           let start_date = date "start_date" (get_iso_date 30) in
+           let end_date = date "end_date" (get_iso_date 0) in
+           Db.get_current_status () >>= function
+           | Db.Connected { access_token; _ } ->
+             Lwt.catch
+               (fun () ->
+                 Plaid.get_transactions access_token start_date end_date
+                 >>= fun json -> Dream.json (Yojson.Safe.to_string json))
+               (plaid_error_response "transactions")
            | _ -> Dream.respond ~status:`Not_Found "Not connected")
        ; Dream.post "/api/plaid/webhook" plaid_webhook_handler
          (* Path exposed through the Cloudflare tunnel (webhook.salh.xyz/plaid) *)

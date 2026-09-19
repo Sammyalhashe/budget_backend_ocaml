@@ -30,7 +30,7 @@ Note that verification depends on hashing the body exactly as received. `handle_
 `process_webhook_event` in `lib/plaid_webhook.ml` handles exactly two cases. Everything else, including all `TRANSACTIONS` webhooks, falls through a catch-all and does nothing.
 
 - **`LINK` / `SESSION_FINISHED` or `ITEM_ADD_RESULT`** — exchanges the public token(s) and saves them, via `Auth_flow.exchange`. It only proceeds if the event carries at least one public token and its `status`, when present, is `SUCCESS`. Otherwise the session is marked `error` and an `Auth_error` is broadcast.
-- **`ITEM` / `ERROR`** — marks the token errored, but only when `error_code` is `ITEM_LOGIN_REQUIRED`. Other item errors are dropped.
+- **`ITEM` / `ERROR`** — marks the token errored, but only when `error_code` is `ITEM_LOGIN_REQUIRED`, and broadcasts an `Auth_error` so a front-end showing that item knows it has to re-authenticate. Other item errors are dropped.
 
 ## The authentication flow
 
@@ -43,14 +43,21 @@ Both paths exchange the public token, so they are arbitrated by `Db.claim_exchan
 
 The shared sequence lives in `Auth_flow.exchange`, used by both paths. A failed exchange releases the claim, so a crash mid-exchange does not leave the session permanently stuck as `claimed`.
 
+`Auth_flow.exchange` also broadcasts the outcome — `Auth_connected` or `Auth_error` — before returning. Announcing from there rather than from the webhook handler is what makes the two paths indistinguishable to a front-end: an authentication finished by the polling fallback signals exactly like one finished by a webhook. The claim loser announces nothing, so an outcome is broadcast once. Every event carries the link token of the session it concerns, since a client may have a session open while another one finishes.
+
 This is why the abandoned-session guard matters. If a `SESSION_FINISHED` with no tokens were allowed to claim the session, an abandoned Link attempt would take the claim, mark the session `connected` with no token stored, and permanently lock out the polling fallback. Rejecting those events keeps the fallback available.
 
 ## Real-time TUI Integration
 
-The TUI isn't a public web server, so it can't receive webhooks. Two mechanisms exist:
+The TUI isn't a public web server, so it can't receive webhooks. The backend relays them instead, over three routes:
 
-- **`GET /api/plaid/wait-auth`** — the long-poll the TUI currently uses. It blocks until the session reaches `connected`, and carries the polling fallback described above.
-- **`GET /api/plaid/ws`** — a WebSocket that broadcasts `Plaid_event` values as the backend processes webhooks. Wired up on the server, but the TUI does not currently subscribe to it.
+- **`GET /api/plaid/events`** — server-sent events, the channel the TUI listens on. It opens with a `status` event holding the current connection, then sends a `plaid` event per broadcast and a `: ping` comment every 15 seconds to keep idle proxies from closing it. The subscription is dropped when the connection ends.
+- **`GET /api/plaid/wait-auth?link_token=…`** — a long poll that blocks until the session reaches `connected`, and carries the polling fallback described above.
+- **`GET /api/plaid/ws`** — the same broadcast over a WebSocket, for clients that prefer it.
+
+The TUI waits on the event stream and the long poll at the same time and takes whichever answers first. They fail independently — a stream cut by a proxy, a long poll hitting a restarting server — so one of them erroring out retires that channel rather than failing the authentication; only an answer about the session, or both channels being gone, ends the wait.
+
+Once connected, the front-end reads data through `GET /api/plaid/accounts` and `GET /api/plaid/transactions`, which look up the stored access token themselves. The token stays on the backend. The TUI also asks `GET /api/plaid/status` at startup, so restarting it resumes an existing connection instead of starting a new Link session.
 
 ## Testing Webhooks Locally
 
@@ -70,6 +77,12 @@ curl -X POST http://localhost:5000/api/plaid/webhook \
 ```
 
 Against a server with verification on, that same request returns `400 rejected: no Plaid-Verification header`.
+
+Watch what a front-end would see while doing that, with:
+
+```bash
+curl -N http://localhost:5000/api/plaid/events
+```
 
 The verification logic itself is covered by `test/test_jwt.ml`, which signs real ES256 tokens and checks the forgery cases (wrong key, altered body, `alg: none`, HS256 with the public key as secret, and replay). Run it with `dune test` — that needs no server and no credentials.
 
