@@ -7,6 +7,7 @@ lambda-term TUI client that drives the authentication flow from the terminal.
 
 `dune` is only on `PATH` inside the devenv shell. Run `direnv allow` once and
 it loads automatically; otherwise prefix every command with `devenv shell --`.
+To test end to end at home, follow [CHECKLIST.md](CHECKLIST.md).
 
 ```bash
 direnv allow                  # once, then dune works directly

@@ -110,7 +110,7 @@ See [Plaid Sandbox docs](https://plaid.com/docs/sandbox/) for more test accounts
 
 The full path: a real Plaid Link session, delivered to a running server
 through the Cloudflare Tunnel, watched live over SSE, and surfaced in the
-TUI.
+TUI. The short version is [CHECKLIST.md](CHECKLIST.md).
 
 ### 7.1 Where does `webhook.salh.xyz` actually point?
 
