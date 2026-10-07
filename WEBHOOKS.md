@@ -51,7 +51,7 @@ This is why the abandoned-session guard matters. If a `SESSION_FINISHED` with no
 
 The TUI isn't a public web server, so it can't receive webhooks. The backend relays them instead, over three routes:
 
-- **`GET /api/plaid/events`** — server-sent events, the channel the TUI listens on. It opens with a `status` event holding the current connection, then sends a `plaid` event per broadcast and a `: ping` comment every 15 seconds to keep idle proxies from closing it. The subscription is dropped when the connection ends.
+- **`GET /api/plaid/events`** — server-sent events, the channel the TUI listens on. It opens with a `status` event holding the current connection, then sends a `plaid` event per broadcast and a `: ping` comment every 15 seconds to keep idle proxies from closing it. The ping does not reveal a client that has gone away — Dream's writes keep succeeding after a disconnect — so the server ends every stream after 300 seconds, the wait-auth timeout, and drops its subscription then; a client that still wants events reconnects.
 - **`GET /api/plaid/wait-auth?link_token=…`** — a long poll that blocks until the session reaches `connected`, and carries the polling fallback described above.
 - **`GET /api/plaid/ws`** — the same broadcast over a WebSocket, for clients that prefer it.
 

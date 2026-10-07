@@ -82,8 +82,16 @@ let () =
       Lwt.pause () >>= fun () ->
       check "a stalled subscriber does not block the others" ~expected:"true"
         ~actual:(string_of_bool !fast);
-      check "notify waits for every delivery" ~expected:"true"
-        ~actual:(string_of_bool (Lwt.state broadcast = Lwt.Sleep));
+      (* Nor may it hold up notify itself: [Auth_flow.exchange] broadcasts
+         before answering wait-auth or Plaid, and a write to a dead stream
+         can stay pending forever. *)
+      Lwt.pick
+        [ (broadcast >|= fun () -> "resolved")
+        ; (Lwt_unix.sleep 1.0 >|= fun () -> "pending")
+        ]
+      >>= fun outcome ->
+      check "a stalled subscriber does not block notify" ~expected:"resolved"
+        ~actual:outcome;
       Lwt.return_unit );
   if !failures > 0 then (
     Printf.printf "\n%d check(s) failed\n" !failures;

@@ -19,7 +19,7 @@ type auth_result = {
 (* What the backend knows about the current connection, as reported by
    /api/plaid/status and by the snapshot the event stream opens with. *)
 type connection =
-  | Connected of { item_id : string; access_token : string }
+  | Connected of { item_id : string }
   | Pending of { link_token : string }
   | Auth_failed of { link_token : string }
   | Disconnected
@@ -114,7 +114,7 @@ let connection_of_json json =
   let field = string_field json in
   match field "status" with
   | "connected" ->
-    Connected { item_id = field "item_id"; access_token = field "access_token" }
+    Connected { item_id = field "item_id" }
   | "pending" -> Pending { link_token = field "link_token" }
   | "error" -> Auth_failed { link_token = field "link_token" }
   | _ -> Disconnected
@@ -235,32 +235,45 @@ let frames_of_buffer buffer =
   List.filter_map parse_frame blocks
 
 (* Reads the stream until [decide] returns a verdict for one of its frames.
-   The connection is left to close with the process: the stream never ends on
-   its own, so there is nothing to drain. *)
+   The stream may not end for minutes, so the connection is opened by hand
+   and closed once the verdict is in or the wait is cancelled; the TUI opens
+   a new stream for every authentication attempt. *)
 let watch_events ~decide =
   catch_request (fun () ->
     let uri = Uri.of_string (base_url ^ "/api/plaid/events") in
-    Cohttp_lwt_unix.Client.get uri >>= fun (resp, body) ->
-    let code = Cohttp.Response.status resp |> Cohttp.Code.code_of_status in
-    if code <> 200 then Lwt.return (Error (Http_error code))
-    else
-      let chunks = Cohttp_lwt.Body.to_stream body in
-      let buffer = Buffer.create 512 in
-      let rec read () =
-        Lwt_stream.get chunks >>= function
-        | None -> Lwt.return (Error (Parse_error "event stream closed"))
-        | Some chunk ->
-          Buffer.add_string buffer chunk;
-          let rec consume = function
-            | [] -> read ()
-            | frame :: rest ->
-              (match decide frame.name (Yojson.Safe.from_string frame.data) with
-               | Some verdict -> Lwt.return verdict
-               | None -> consume rest)
+    let ctx = Lazy.force Cohttp_lwt_unix.Net.default_ctx in
+    Cohttp_lwt_unix.Net.resolve ~ctx uri
+    >>= Cohttp_lwt_unix.Connection.connect ~ctx
+    >>= fun connection ->
+    Lwt.finalize
+      (fun () ->
+        Cohttp_lwt_unix.Connection.call connection `GET uri
+        >>= fun (resp, body) ->
+        let code = Cohttp.Response.status resp |> Cohttp.Code.code_of_status in
+        if code <> 200 then Lwt.return (Error (Http_error code))
+        else
+          let chunks = Cohttp_lwt.Body.to_stream body in
+          let buffer = Buffer.create 512 in
+          let rec read () =
+            Lwt_stream.get chunks >>= function
+            | None -> Lwt.return (Error (Parse_error "event stream closed"))
+            | Some chunk ->
+              Buffer.add_string buffer chunk;
+              let rec consume = function
+                | [] -> read ()
+                | frame :: rest ->
+                  (match
+                     decide frame.name (Yojson.Safe.from_string frame.data)
+                   with
+                   | Some verdict -> Lwt.return verdict
+                   | None -> consume rest)
+              in
+              consume (frames_of_buffer buffer)
           in
-          consume (frames_of_buffer buffer)
-      in
-      read ())
+          read ())
+      (fun () ->
+        Cohttp_lwt_unix.Connection.close connection;
+        Lwt.return_unit))
 
 (* Resolves when the backend announces the outcome of [link_token]. Events
    for an older session are ignored, as is the opening status snapshot: a

@@ -30,17 +30,13 @@ let plaid_error_response context exn =
     Dream.respond ~status:`Internal_Server_Error "Internal error"
 
 (* Shared by GET /api/plaid/status and the snapshot the event stream opens
-   with, so a front-end that connects late is not left guessing.
-
-   The token is only in the status response, which a client asks for; it is
-   left out of the broadcast, which is pushed to everyone listening. *)
-let status_json ?(with_token = false) = function
-  | Db.Connected { item_id; access_token; updated_at } ->
+   with, so a front-end that connects late is not left guessing. The access
+   token is left out of both: the backend makes the Plaid calls itself. *)
+let status_json = function
+  | Db.Connected { item_id; updated_at; _ } ->
     `Assoc
       [ ("status", `String "connected")
       ; ("item_id", `String item_id)
-      ; ( "access_token"
-        , if with_token then `String access_token else `Null )
       ; ("access_token_present", `Bool true)
       ; ("updated_at", `String updated_at)
       ]
@@ -68,34 +64,58 @@ let sse_frame ~event json =
 
 let sse_heartbeat_seconds = 15.0
 
-(* Nothing reaches the TUI between events, so a connection dropped mid-way —
-   the server restarted, the laptop slept — would look exactly like a session
-   the user has not finished yet. The comment frame both keeps intermediaries
-   from timing the connection out and fails the write once the peer is gone,
-   which is what ends the handler and unsubscribes it. *)
+(* Matches the wait-auth timeout, past which no session is still pending. *)
+let sse_lifetime_seconds = 300.0
+
+(* The comment frame keeps intermediaries from timing an idle connection out.
+   It does not detect a peer that hung up: Dream's writes keep succeeding
+   after a disconnect, so every stream ends at [sse_lifetime_seconds] instead,
+   and a client that still wants events reconnects. "Connection: close" makes
+   that end release the socket too, rather than leave it idling for a next
+   request from a client that is gone.
+
+   A Dream stream takes one pending write at a time; a second one overwrites
+   the first, which then never resolves. Events and pings are therefore
+   queued and written by a single loop. Subscribing before the snapshot is
+   read means an event raised in between is queued rather than lost. *)
 let event_stream_handler _req =
   Dream.stream
     ~headers:
       [ ("Content-Type", "text/event-stream")
       ; ("Cache-Control", "no-cache")
-      ; ("Connection", "keep-alive")
+      ; ("Connection", "close")
       ]
     (fun stream ->
       let write chunk =
         Dream.write stream chunk >>= fun () -> Dream.flush stream
       in
-      Db.get_current_status () >>= fun status ->
-      write (sse_frame ~event:"status" (status_json status)) >>= fun () ->
+      let queue, push = Lwt_stream.create () in
       Plaid_notifier.subscribe (fun event ->
-        write (sse_frame ~event:"plaid" (Plaid_event.to_json event)))
+        push (Some (sse_frame ~event:"plaid" (Plaid_event.to_json event)));
+        Lwt.return_unit)
       >>= fun subscription ->
       let rec heartbeat () =
         Lwt_unix.sleep sse_heartbeat_seconds >>= fun () ->
-        write ": ping\n\n" >>= heartbeat
+        push (Some ": ping\n\n");
+        heartbeat ()
       in
+      let heartbeat = heartbeat () in
+      let lifetime =
+        Lwt_unix.sleep sse_lifetime_seconds >|= fun () -> push None
+      in
+      (* Returning lets Dream.stream close the response. *)
       Lwt.finalize
-        (fun () -> Lwt.catch heartbeat (fun _ -> Lwt.return_unit))
-        (fun () -> Plaid_notifier.unsubscribe subscription))
+        (fun () ->
+          Lwt.catch
+            (fun () ->
+              Db.get_current_status () >>= fun status ->
+              write (sse_frame ~event:"status" (status_json status))
+              >>= fun () -> Lwt_stream.iter_s write queue)
+            (fun _ -> Lwt.return_unit))
+        (fun () ->
+          Lwt.cancel heartbeat;
+          Lwt.cancel lifetime;
+          Plaid_notifier.unsubscribe subscription))
 
 let plaid_webhook_handler req =
   Dream.body req >>= fun body_str ->
@@ -177,10 +197,13 @@ let () =
            Dream.websocket (fun websocket ->
              (* The send must be allowed to fail: a subscriber that swallows
                 the error of a closed socket is never dropped, and the list
-                grows by one dead entry per reconnect. *)
+                grows by one dead entry per reconnect. Sends are serialized
+                because Dream keeps only one pending write per socket. *)
+             let sending = Lwt_mutex.create () in
              Plaid_notifier.subscribe (fun event ->
-               Dream.send websocket
-                 (Yojson.Safe.to_string (Plaid_event.to_json event)))
+               Lwt_mutex.with_lock sending (fun () ->
+                 Dream.send websocket
+                   (Yojson.Safe.to_string (Plaid_event.to_json event))))
              >>= fun subscription ->
              let rec loop () =
                Dream.receive websocket >>= function
@@ -215,8 +238,7 @@ let () =
            Dream.json (Yojson.Safe.to_string response))
        ; Dream.get "/api/plaid/status" (fun _req ->
            Db.get_current_status () >>= fun status ->
-           Dream.json
-             (Yojson.Safe.to_string (status_json ~with_token:true status)))
+           Dream.json (Yojson.Safe.to_string (status_json status)))
        ; Dream.get "/api/plaid/accounts" (fun _req ->
            Db.get_current_status () >>= function
            | Db.Connected { access_token; _ } ->

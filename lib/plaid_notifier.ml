@@ -24,16 +24,15 @@ let unsubscribe id =
 
 let subscriber_count () = Hashtbl.length subscribers
 
-(* The lock covers the snapshot of the table, not the delivery: a subscriber
-   writing to a stalled socket would otherwise hold every other subscriber —
-   and the webhook handler that called [notify] — behind it. A delivery that
-   raises means the peer is gone, so the subscriber is dropped rather than
-   left to fail on every future event. *)
+(* The lock covers the snapshot of the table, not the delivery, and the
+   deliveries are not waited on: a subscriber writing to a stalled socket
+   would otherwise hold every other subscriber — and the handler that called
+   [notify] — behind it, possibly forever. A delivery that raises means the
+   peer is gone, so the subscriber is dropped rather than left to fail on
+   every future event. *)
 let notify event =
   Lwt_mutex.with_lock mutex (fun () ->
     Lwt.return (Hashtbl.fold (fun id f acc -> (id, f) :: acc) subscribers []))
-  >>= fun current ->
-  Lwt_list.iter_p
-    (fun (id, f) ->
-      Lwt.catch (fun () -> f event) (fun _ -> unsubscribe id))
-    current
+  >|= List.iter (fun (id, f) ->
+    Lwt.async (fun () ->
+      Lwt.catch (fun () -> f event) (fun _ -> unsubscribe id)))
