@@ -13,7 +13,6 @@ type auth_start = {
 type auth_result = {
   status : string;
   item_id : string;
-  access_token : string;
 }
 
 (* What the backend knows about the current connection, as reported by
@@ -107,7 +106,6 @@ let wait_auth ~link_token =
            {
              status = item_status;
              item_id = string_field json "item_id";
-             access_token = string_field json "access_token";
            }))
 
 let connection_of_json json =
@@ -296,7 +294,6 @@ let watch_auth ~link_token =
                  item_id =
                    json |> member "item_id" |> to_string_option
                    |> Option.value ~default:"";
-                 access_token = "";
                })
         | Some "auth_error" ->
           Some

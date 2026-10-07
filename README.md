@@ -67,8 +67,7 @@ directory** — launching from elsewhere silently creates a new empty one.
   the stream and the long poll at once, so losing either one does not strand it.
 - **Reading connected accounts.** `GET /api/plaid/accounts` and `GET
   /api/plaid/transactions?start_date=…&end_date=…` use the stored access token,
-  so a front-end never handles one. `POST /api/plaid/get_transactions` still
-  takes an explicit token and date range.
+  so a front-end never handles one.
 - **Verified webhooks.** Plaid's ES256 signature is checked against the raw
   request body, on by default. See `WEBHOOKS.md`.
 

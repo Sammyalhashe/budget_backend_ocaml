@@ -50,7 +50,7 @@ http post http://localhost:5000/api/plaid/start-auth
 ```
 
 ### Wait for auth completion (long-poll)
-Requires the `link_token` from `start-auth`. Waits for the webhook (first 30s) then falls back to polling Plaid directly. Returns `item_id` and `access_token` on success.
+Requires the `link_token` from `start-auth`. Waits for the webhook (first 30s) then falls back to polling Plaid directly. Returns `item_id` on success.
 
 ```nushell
 http get http://localhost:5000/api/plaid/wait-auth?link_token=<LINK_TOKEN>
@@ -63,19 +63,17 @@ Returns the current state and `item_id` (if connected). The access token stays o
 http get http://localhost:5000/api/plaid/status
 ```
 
-### Fetch transactions
-Now supports defaults (last 2 years to today) if dates are omitted.
+### Fetch accounts and transactions
+Uses the stored access token. Transactions default to the last 30 days.
 
 ```nushell
-# Default (last 2 years)
-{ access_token: "<TOKEN>" } | http post http://localhost:5000/api/plaid/get_transactions
+http get http://localhost:5000/api/plaid/accounts
+
+# Default (last 30 days)
+http get http://localhost:5000/api/plaid/transactions
 
 # Custom range
-{
-  access_token: "<TOKEN>",
-  start_date: "2024-01-01",
-  end_date: "2024-03-31"
-} | http post http://localhost:5000/api/plaid/get_transactions
+http get "http://localhost:5000/api/plaid/transactions?start_date=2024-01-01&end_date=2024-03-31"
 ```
 
 ### Real-time events (WebSockets)

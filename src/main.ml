@@ -159,36 +159,12 @@ let () =
              |> Option.value ~default:"default_session"
            in
            Plaid.exchange_public_token public_token
-           >>= fun (json, item_id, access_token) ->
+           >>= fun (_, item_id, access_token) ->
            Db.save_token item_id access_token (Some session_id)
            >>= fun () ->
-           Dream.json (Yojson.Safe.to_string json))
-       ; Dream.post "/api/plaid/get_transactions" (fun request ->
-           Dream.body request >>= fun body_str ->
-           let payload = 
-             try Yojson.Safe.from_string body_str 
-             with _ -> `Assoc []
-           in
-           let open Yojson.Safe.Util in
-           let access_token = payload |> member "access_token" |> to_string_option in
-           let start_date = 
-             payload |> member "start_date" |> to_string_option 
-             |> Option.value ~default:(get_iso_date 730) (* 2 years ago *)
-           in
-           let end_date = 
-             payload |> member "end_date" |> to_string_option 
-             |> Option.value ~default:(get_iso_date 0) (* today *)
-           in
-           match access_token with
-           | Some token ->
-             Lwt.catch
-               (fun () ->
-                 Plaid_handler.get_transactions token start_date end_date
-                 >>= fun json ->
-                 Dream.json (Yojson.Safe.to_string json))
-               (plaid_error_response "get_transactions")
-           | None ->
-             Dream.respond ~status:`Bad_Request "Missing access_token")
+           (* Plaid's reply carries the access token, which stays here. *)
+           Dream.json
+             (Yojson.Safe.to_string (`Assoc [ ("item_id", `String item_id) ])))
        ; Dream.post "/api/plaid/cleanup" (fun _req ->
            Db.delete_errored_tokens () >>= fun () ->
            Dream.json (Yojson.Safe.to_string (`Assoc [("status", `String "success"); ("message", `String "Deleted errored tokens")])))
@@ -277,13 +253,12 @@ let () =
              let log msg = Dream.info (fun m -> m "%s" msg) in
              Auth_flow.wait_for_completion ~link_token ~log ()
              >>= (function
-             | Auth_flow.Wait_connected { item_id; access_token } ->
+             | Auth_flow.Wait_connected { item_id; _ } ->
                Dream.json
                  (Yojson.Safe.to_string
                     (`Assoc
                        [ ("status", `String "connected")
                        ; ("item_id", `String item_id)
-                       ; ("access_token", `String access_token)
                        ]))
              | Auth_flow.Wait_connected_unknown_token ->
                Dream.json
