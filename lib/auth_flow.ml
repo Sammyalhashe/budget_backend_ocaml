@@ -21,6 +21,20 @@ type wait_result =
   | Wait_failed of string
   | Wait_timeout
 
+(* Both completion paths broadcast from here, so a front-end watching the
+   event stream is told about the connection whether the webhook or the
+   polling fallback completed it. *)
+let broadcast_outcome ~link_token = function
+  | Connected { item_id; _ } ->
+    Plaid_notifier.notify
+      (Plaid_event.auth_connected ~item_id ~link_token:(Some link_token))
+  | Failed msg ->
+    Plaid_notifier.notify
+      (Plaid_event.auth_error ~link_token:(Some link_token) msg)
+  (* The winner of the claim broadcasts; a second announcement of the same
+     outcome would only make the front-end act twice. *)
+  | Already_claimed -> Lwt.return_unit
+
 (* Claims the session and, if it wins the claim, exchanges every public token
    the session produced. On failure the claim is released so the other path is
    not locked out, and the session is marked errored so callers stop waiting. *)
@@ -49,6 +63,8 @@ let exchange ~link_token ~public_tokens =
         Db.release_exchange link_token >>= fun () ->
         Db.update_link_session_status link_token "error" >>= fun () ->
         Lwt.return (Failed (Printexc.to_string exn)))
+    >>= fun outcome ->
+    broadcast_outcome ~link_token outcome >>= fun () -> Lwt.return outcome
 
 (* Plaid's /link/token/get response nests the public token several levels
    down, and any level may be absent while the session is still in progress. *)

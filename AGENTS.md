@@ -26,11 +26,12 @@ devenv shell -- dune build @check
 devenv shell -- dune build @fmt
 ```
 
-**Tests are minimal.** `devenv shell -- dune test` runs two files:
-`test/test_db.ml` (the exchange claim, aggregate status, multi-item sessions)
-and `test/test_jwt.ml` (webhook signature verification, including forged
-tokens). They use plain assertions and exit non-zero on failure — no test
-framework is configured. Nothing covers `lib/plaid.ml` or the HTTP layer, since
+**Tests are minimal.** `devenv shell -- dune test` runs three files:
+`test/test_db.ml` (the exchange claim, aggregate status, multi-item sessions),
+`test/test_jwt.ml` (webhook signature verification, including forged tokens)
+and `test/test_notifier.ml` (the event broadcast, including stalled and
+failing subscribers). They use plain assertions and exit non-zero on failure —
+no test framework is configured. Nothing covers `lib/plaid.ml` or the HTTP layer, since
 both need a stub server; point `PLAID_BASE_URL` at one to test against it.
 
 For manual/integration testing (sops credentials, curl examples, end-to-end auth flow), see **[TESTING.md](TESTING.md)**.

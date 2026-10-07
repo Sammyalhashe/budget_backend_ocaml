@@ -15,7 +15,10 @@ type wait_result =
 
 (** [exchange ~link_token ~public_tokens] claims the session and, if it wins,
     exchanges every public token and records the results. Releases the claim on
-    failure so the other path is not locked out. Safe to call concurrently. *)
+    failure so the other path is not locked out. Safe to call concurrently.
+
+    The winner broadcasts its outcome through {!Plaid_notifier}, so listening
+    front-ends see the connection regardless of which path completed it. *)
 val exchange :
   link_token:string -> public_tokens:string list -> outcome Lwt.t
 

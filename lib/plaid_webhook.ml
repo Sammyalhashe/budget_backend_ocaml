@@ -140,36 +140,21 @@ let process_webhook_event event =
          | Some (_, _, "connected", _) -> Lwt.return_unit
          | _ ->
            Db.update_link_session_status link_token "error" >>= fun () ->
-           let err_event = Plaid_event.{
-             event_type = Auth_error;
-             item_id = (match event.item_id with Some id -> id | None -> "");
-             error = Some ("Link session did not complete: " ^
-                           (match event.status with Some s -> s | None -> "no public token"));
-             new_transactions = None;
-             last_updated = None;
-           } in
-           Plaid_notifier.notify err_event)
+           let reason =
+             match event.status with
+             | Some status -> status
+             | None -> "no public token"
+           in
+           Plaid_notifier.notify
+             (Plaid_event.auth_error
+                ?item_id:event.item_id
+                ~link_token:(Some link_token)
+                ("Link session did not complete: " ^ reason)))
        else
-         Auth_flow.exchange ~link_token ~public_tokens:tokens >>= (function
-         | Auth_flow.Already_claimed -> Lwt.return_unit
-         | Auth_flow.Connected { item_id; access_token = _ } ->
-           let auth_event = Plaid_event.{
-             event_type = Auth_connected;
-             item_id;
-             error = None;
-             new_transactions = None;
-             last_updated = None;
-           } in
-           Plaid_notifier.notify auth_event
-         | Auth_flow.Failed msg ->
-           let err_event = Plaid_event.{
-             event_type = Auth_error;
-             item_id = "";
-             error = Some msg;
-             new_transactions = None;
-             last_updated = None;
-           } in
-           Plaid_notifier.notify err_event)
+         (* Auth_flow broadcasts the outcome itself, so that the polling
+            fallback announces its result the same way this path does. *)
+         Auth_flow.exchange ~link_token ~public_tokens:tokens
+         >>= fun _outcome -> Lwt.return_unit
      | None -> Lwt.return_unit)
   | "ITEM", "ERROR" ->
     (match event.item_id with
@@ -177,7 +162,11 @@ let process_webhook_event event =
        let open Yojson.Safe.Util in
        let error_code = event.raw |> member "error" |> member "error_code" |> to_string_option in
        (match error_code with
-        | Some "ITEM_LOGIN_REQUIRED" -> Db.mark_token_error id
+        | Some "ITEM_LOGIN_REQUIRED" ->
+          Db.mark_token_error id >>= fun () ->
+          Plaid_notifier.notify
+            (Plaid_event.auth_error ~item_id:id ~link_token:None
+               "item needs re-authentication")
         | _ -> Lwt.return_unit)
      | None -> Lwt.return_unit)
   | _ -> Lwt.return_unit

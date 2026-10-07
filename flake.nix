@@ -45,7 +45,7 @@
           buildPhase = "dune build";
           installPhase = ''
             mkdir -p $out/bin
-            cp _build/default/*.exe $out/bin/
+            cp _build/default/src/main.exe _build/default/bin/tui.exe $out/bin/
           '';
         };
       }
